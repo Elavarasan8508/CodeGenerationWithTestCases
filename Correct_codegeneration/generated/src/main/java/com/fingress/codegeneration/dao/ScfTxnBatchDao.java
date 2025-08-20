@@ -1,0 +1,31 @@
+package com.bsit.codegeneration.dao;
+
+import org.jdbi.v3.sqlobject.statement.SqlQuery;
+import org.jdbi.v3.sqlobject.statement.SqlUpdate;
+import org.jdbi.v3.sqlobject.statement.GetGeneratedKeys;
+import org.jdbi.v3.sqlobject.customizer.Bind;
+import org.jdbi.v3.sqlobject.customizer.BindBean;
+import org.jdbi.v3.sqlobject.config.RegisterRowMapper;
+import com.bsit.codegeneration.record.ScfTxnBatch;
+import com.bsit.codegeneration.mapper.ScfTxnBatchMapper;
+import java.util.*;
+
+@RegisterRowMapper(ScfTxnBatchMapper.class)
+public interface ScfTxnBatchDao {
+
+    @SqlQuery("SELECT * FROM SCF_TXN_BATCH")
+    public List<ScfTxnBatch> findAll();
+
+    @SqlQuery("SELECT * FROM SCF_TXN_BATCH WHERE id = :id")
+    public Optional<ScfTxnBatch> findById(@Bind("id") String id);
+
+    @SqlUpdate("INSERT INTO SCF_TXN_BATCH(ID, REFERENCE_ID, TYPE_CODE, SUB_TYPE_CODE, ACTIVE_CODE, STAGE_CODE, STATUS_CODE, CREATED_ON, CREATED_BY, LAST_UPDATED_ON, LAST_UPDATED_BY, LAST_AUTHORISED_ON, LAST_AUTHORISED_BY, TEMPLATE, IS_TEMPLATE, ANCHOR_CRN, FILE_MASTER_REF_NO, SCF_REQ_REF_NO, TXN_BATCH_COUNT, PRODUCT_TYPE, UTR_REF_NO, FINANCE_REF_NO, STATUS, REMARKS, EVENTS_PAY_RES_REF_NO, CMS_REF_NO, PURPOSE_CODE, TOTAL_COUNT, TOTAL_AMOUNT) VALUES (:ID, :REFERENCE_ID, :TYPE_CODE, :SUB_TYPE_CODE, :ACTIVE_CODE, :STAGE_CODE, :STATUS_CODE, :CREATED_ON, :CREATED_BY, :LAST_UPDATED_ON, :LAST_UPDATED_BY, :LAST_AUTHORISED_ON, :LAST_AUTHORISED_BY, :TEMPLATE, :IS_TEMPLATE, :ANCHOR_CRN, :FILE_MASTER_REF_NO, :SCF_REQ_REF_NO, :TXN_BATCH_COUNT, :PRODUCT_TYPE, :UTR_REF_NO, :FINANCE_REF_NO, :STATUS, :REMARKS, :EVENTS_PAY_RES_REF_NO, :CMS_REF_NO, :PURPOSE_CODE, :TOTAL_COUNT, :TOTAL_AMOUNT)")
+    @GetGeneratedKeys()
+    public String insert(@BindBean() ScfTxnBatch entity);
+
+    @SqlQuery("UPDATE SCF_TXN_BATCH SET ID = :ID, REFERENCE_ID = :REFERENCE_ID, TYPE_CODE = :TYPE_CODE, SUB_TYPE_CODE = :SUB_TYPE_CODE, ACTIVE_CODE = :ACTIVE_CODE, STAGE_CODE = :STAGE_CODE, STATUS_CODE = :STATUS_CODE, CREATED_ON = :CREATED_ON, CREATED_BY = :CREATED_BY, LAST_UPDATED_ON = :LAST_UPDATED_ON, LAST_UPDATED_BY = :LAST_UPDATED_BY, LAST_AUTHORISED_ON = :LAST_AUTHORISED_ON, LAST_AUTHORISED_BY = :LAST_AUTHORISED_BY, TEMPLATE = :TEMPLATE, IS_TEMPLATE = :IS_TEMPLATE, ANCHOR_CRN = :ANCHOR_CRN, FILE_MASTER_REF_NO = :FILE_MASTER_REF_NO, SCF_REQ_REF_NO = :SCF_REQ_REF_NO, TXN_BATCH_COUNT = :TXN_BATCH_COUNT, PRODUCT_TYPE = :PRODUCT_TYPE, UTR_REF_NO = :UTR_REF_NO, FINANCE_REF_NO = :FINANCE_REF_NO, STATUS = :STATUS, REMARKS = :REMARKS, EVENTS_PAY_RES_REF_NO = :EVENTS_PAY_RES_REF_NO, CMS_REF_NO = :CMS_REF_NO, PURPOSE_CODE = :PURPOSE_CODE, TOTAL_COUNT = :TOTAL_COUNT, TOTAL_AMOUNT = :TOTAL_AMOUNT WHERE id = :id")
+    public int update(@BindBean() ScfTxnBatch entity);
+
+    @SqlQuery("DELETE FROM SCF_TXN_BATCH WHERE id = :id")
+    public int delete(@Bind("id") String id);
+}

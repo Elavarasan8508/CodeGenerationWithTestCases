@@ -1,0 +1,113 @@
+generator:
+  name: "CustomCodeGen"
+
+  database:
+    dialect: "PostgreSQL"
+    driver: "org.postgresql.Driver"
+    url: "jdbc:postgresql://localhost:5432/postgres"
+    user: "postgres"
+    password: "root"
+    schema: "public"
+    includes:
+      - ".*"
+    excludes:
+      - "flyway_schema_history"
+    input-filter:
+      table-types: ["TABLE", "VIEW"]
+    naming-strategy:
+      strip-prefixes: ["tbl_", "v_"]
+      convert-to-camelCase: true
+      uppercase-acronyms: ["ID", "URL", "API"]
+
+  target:
+    base-package: "com.bsit.codegeneration"
+    output-directory: "src/main/java"
+    record-package: "dto"
+    dao-package: "dao"
+    mapper-package: "mapper"
+    repository-package: "repository"
+    overwrite: true
+    format-source: true
+
+  dto:
+    generate: true
+    builder-pattern: true
+    package-name: "dto"
+    use-java-time: true
+    strip-prefixes: ["tbl_", "v_"]
+    annotations:
+      - "javax.validation.constraints.NotNull"
+    include-relationships: true
+    include-reverse-relationships: true
+    remove-foreign-key-id-fields: true
+
+  pojo:
+    generate: true
+    annotations:
+      - "lombok.Data"
+    implement-interfaces: []
+    serializable: true
+    use-java-time: true
+    add-builder-pattern: true
+    validation-annotations: false
+    include-relationships: true
+    include-reverse-relationships: true
+    remove-foreign-key-id-fields: true
+
+  record:
+    generate: true
+    builder-pattern: true
+    package-name: "record"
+    strip-prefixes: ["tbl_", "v_"]
+    use-java-time: true
+    annotations:
+      - "javax.validation.constraints.NotNull"
+    include-relationships: true
+    include-reverse-relationships: true
+    remove-foreign-key-id-fields: true
+
+  dao:
+    generate: true
+    style: "spring-jdbc"
+    use-named-parameters: true
+    generate-crud: true
+    generate-batch-ops: true
+    generate-pagination-support: true
+    generate-soft-delete-support: false
+    base-class: "BaseRepository"
+
+  mapper:
+    generate: false
+    use-row-mapper: true
+    use-resultset-mapper: false
+    mapper-style: "spring"
+    map-nulls-explicitly: true
+    null-handling-strategy: "default"
+
+  repository:
+    generate: false
+    annotation: "@Repository"
+    transaction-manager: "txManager"
+
+  advanced:
+    enum-strategy: "ordinal"
+    generate-schema-as-java-package: false
+    generate-static-queries: false
+    generate-metadata: true
+    custom-type-mappings:
+      - db-type: "jsonb"
+        java-type: "java.util.Map<String, Object>"
+      - db-type: "timestamp"
+        java-type: "java.time.LocalDateTime"
+
+  sql-templates:
+    enabled: false
+    output-directory: "src/main/resources/sql"
+    generate-per-method: true
+    template-naming: "kebab-case"
+    dialect-specific-variants: true
+
+  logging:
+    enabled: true
+    level: "DEBUG"
+    output-file: "target/codegen.log"

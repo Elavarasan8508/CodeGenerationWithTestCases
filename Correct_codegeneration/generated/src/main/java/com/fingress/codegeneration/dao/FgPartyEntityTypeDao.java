@@ -1,0 +1,31 @@
+package com.bsit.codegeneration.dao;
+
+import org.jdbi.v3.sqlobject.statement.SqlQuery;
+import org.jdbi.v3.sqlobject.statement.SqlUpdate;
+import org.jdbi.v3.sqlobject.statement.GetGeneratedKeys;
+import org.jdbi.v3.sqlobject.customizer.Bind;
+import org.jdbi.v3.sqlobject.customizer.BindBean;
+import org.jdbi.v3.sqlobject.config.RegisterRowMapper;
+import com.bsit.codegeneration.record.FgPartyEntityType;
+import com.bsit.codegeneration.mapper.FgPartyEntityTypeMapper;
+import java.util.*;
+
+@RegisterRowMapper(FgPartyEntityTypeMapper.class)
+public interface FgPartyEntityTypeDao {
+
+    @SqlQuery("SELECT * FROM FG_PARTY_ENTITY_TYPE")
+    public List<FgPartyEntityType> findAll();
+
+    @SqlQuery("SELECT * FROM FG_PARTY_ENTITY_TYPE WHERE id = :id")
+    public Optional<FgPartyEntityType> findById(@Bind("id") Long id);
+
+    @SqlUpdate("INSERT INTO FG_PARTY_ENTITY_TYPE(ID, IS_ENABLED, PARTY_REFERENCE_ID, ENTITY_CATEGORY_CODE, ENTITY_TYPE_CODE, USER_OBJECT_TYPE, USER_OBJECT_REFERENCE_ID, ACTIVE_CODE, STATUS_CODE, CREATED_ON, CREATED_BY, LAST_UPDATED_ON, LAST_UPDATED_BY, LAST_AUTHORISED_ON, LAST_AUTHORISED_BY, ENTITY_TYPE_NAME, PARTY_ID, PARTY_VERSION_ID, USER_OBJECT_ID, USER_OBJECT_VERSION_ID, TEMPLATE, ENTITY_ACTION) VALUES (:ID, :IS_ENABLED, :PARTY_REFERENCE_ID, :ENTITY_CATEGORY_CODE, :ENTITY_TYPE_CODE, :USER_OBJECT_TYPE, :USER_OBJECT_REFERENCE_ID, :ACTIVE_CODE, :STATUS_CODE, :CREATED_ON, :CREATED_BY, :LAST_UPDATED_ON, :LAST_UPDATED_BY, :LAST_AUTHORISED_ON, :LAST_AUTHORISED_BY, :ENTITY_TYPE_NAME, :PARTY_ID, :PARTY_VERSION_ID, :USER_OBJECT_ID, :USER_OBJECT_VERSION_ID, :TEMPLATE, :ENTITY_ACTION)")
+    @GetGeneratedKeys()
+    public Long insert(@BindBean() FgPartyEntityType entity);
+
+    @SqlQuery("UPDATE FG_PARTY_ENTITY_TYPE SET ID = :ID, IS_ENABLED = :IS_ENABLED, PARTY_REFERENCE_ID = :PARTY_REFERENCE_ID, ENTITY_CATEGORY_CODE = :ENTITY_CATEGORY_CODE, ENTITY_TYPE_CODE = :ENTITY_TYPE_CODE, USER_OBJECT_TYPE = :USER_OBJECT_TYPE, USER_OBJECT_REFERENCE_ID = :USER_OBJECT_REFERENCE_ID, ACTIVE_CODE = :ACTIVE_CODE, STATUS_CODE = :STATUS_CODE, CREATED_ON = :CREATED_ON, CREATED_BY = :CREATED_BY, LAST_UPDATED_ON = :LAST_UPDATED_ON, LAST_UPDATED_BY = :LAST_UPDATED_BY, LAST_AUTHORISED_ON = :LAST_AUTHORISED_ON, LAST_AUTHORISED_BY = :LAST_AUTHORISED_BY, ENTITY_TYPE_NAME = :ENTITY_TYPE_NAME, PARTY_ID = :PARTY_ID, PARTY_VERSION_ID = :PARTY_VERSION_ID, USER_OBJECT_ID = :USER_OBJECT_ID, USER_OBJECT_VERSION_ID = :USER_OBJECT_VERSION_ID, TEMPLATE = :TEMPLATE, ENTITY_ACTION = :ENTITY_ACTION WHERE id = :id")
+    public int update(@BindBean() FgPartyEntityType entity);
+
+    @SqlQuery("DELETE FROM FG_PARTY_ENTITY_TYPE WHERE id = :id")
+    public int delete(@Bind("id") Long id);
+}

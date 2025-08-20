@@ -1,0 +1,31 @@
+package com.bsit.codegeneration.dao;
+
+import org.jdbi.v3.sqlobject.statement.SqlQuery;
+import org.jdbi.v3.sqlobject.statement.SqlUpdate;
+import org.jdbi.v3.sqlobject.statement.GetGeneratedKeys;
+import org.jdbi.v3.sqlobject.customizer.Bind;
+import org.jdbi.v3.sqlobject.customizer.BindBean;
+import org.jdbi.v3.sqlobject.config.RegisterRowMapper;
+import com.bsit.codegeneration.record.FgPartyContent;
+import com.bsit.codegeneration.mapper.FgPartyContentMapper;
+import java.util.*;
+
+@RegisterRowMapper(FgPartyContentMapper.class)
+public interface FgPartyContentDao {
+
+    @SqlQuery("SELECT * FROM FG_PARTY_CONTENT")
+    public List<FgPartyContent> findAll();
+
+    @SqlQuery("SELECT * FROM FG_PARTY_CONTENT WHERE id = :id")
+    public Optional<FgPartyContent> findById(@Bind("id") Long id);
+
+    @SqlUpdate("INSERT INTO FG_PARTY_CONTENT(ID, PARTY_ID, PARTY_VERSION_ID, PARTY_SUB_TYPE, PARTY_CODE, CONTENT_TYPE_CODE, CONTENT_SUB_TYPE_CODE, CONTENT_DOC_NO, CONTENT_FILE_NAME, CONTENT_STORAGE_CODE, CONTENT_ATTACHMENT_ID, CONTENT_DMS_ID, CONTENT_DMS_URL, CONTENT_TAGS, COMMENTS, ACTIVE_CODE, STATUS_CODE, CREATED_ON, CREATED_BY, LAST_UPDATED_ON, LAST_UPDATED_BY, LAST_AUTHORISED_ON, LAST_AUTHORISED_BY) VALUES (:ID, :PARTY_ID, :PARTY_VERSION_ID, :PARTY_SUB_TYPE, :PARTY_CODE, :CONTENT_TYPE_CODE, :CONTENT_SUB_TYPE_CODE, :CONTENT_DOC_NO, :CONTENT_FILE_NAME, :CONTENT_STORAGE_CODE, :CONTENT_ATTACHMENT_ID, :CONTENT_DMS_ID, :CONTENT_DMS_URL, :CONTENT_TAGS, :COMMENTS, :ACTIVE_CODE, :STATUS_CODE, :CREATED_ON, :CREATED_BY, :LAST_UPDATED_ON, :LAST_UPDATED_BY, :LAST_AUTHORISED_ON, :LAST_AUTHORISED_BY)")
+    @GetGeneratedKeys()
+    public Long insert(@BindBean() FgPartyContent entity);
+
+    @SqlQuery("UPDATE FG_PARTY_CONTENT SET ID = :ID, PARTY_ID = :PARTY_ID, PARTY_VERSION_ID = :PARTY_VERSION_ID, PARTY_SUB_TYPE = :PARTY_SUB_TYPE, PARTY_CODE = :PARTY_CODE, CONTENT_TYPE_CODE = :CONTENT_TYPE_CODE, CONTENT_SUB_TYPE_CODE = :CONTENT_SUB_TYPE_CODE, CONTENT_DOC_NO = :CONTENT_DOC_NO, CONTENT_FILE_NAME = :CONTENT_FILE_NAME, CONTENT_STORAGE_CODE = :CONTENT_STORAGE_CODE, CONTENT_ATTACHMENT_ID = :CONTENT_ATTACHMENT_ID, CONTENT_DMS_ID = :CONTENT_DMS_ID, CONTENT_DMS_URL = :CONTENT_DMS_URL, CONTENT_TAGS = :CONTENT_TAGS, COMMENTS = :COMMENTS, ACTIVE_CODE = :ACTIVE_CODE, STATUS_CODE = :STATUS_CODE, CREATED_ON = :CREATED_ON, CREATED_BY = :CREATED_BY, LAST_UPDATED_ON = :LAST_UPDATED_ON, LAST_UPDATED_BY = :LAST_UPDATED_BY, LAST_AUTHORISED_ON = :LAST_AUTHORISED_ON, LAST_AUTHORISED_BY = :LAST_AUTHORISED_BY WHERE id = :id")
+    public int update(@BindBean() FgPartyContent entity);
+
+    @SqlQuery("DELETE FROM FG_PARTY_CONTENT WHERE id = :id")
+    public int delete(@Bind("id") Long id);
+}

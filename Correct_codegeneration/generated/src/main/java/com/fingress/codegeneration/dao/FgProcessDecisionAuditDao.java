@@ -1,0 +1,31 @@
+package com.bsit.codegeneration.dao;
+
+import org.jdbi.v3.sqlobject.statement.SqlQuery;
+import org.jdbi.v3.sqlobject.statement.SqlUpdate;
+import org.jdbi.v3.sqlobject.statement.GetGeneratedKeys;
+import org.jdbi.v3.sqlobject.customizer.Bind;
+import org.jdbi.v3.sqlobject.customizer.BindBean;
+import org.jdbi.v3.sqlobject.config.RegisterRowMapper;
+import com.bsit.codegeneration.record.FgProcessDecisionAudit;
+import com.bsit.codegeneration.mapper.FgProcessDecisionAuditMapper;
+import java.util.*;
+
+@RegisterRowMapper(FgProcessDecisionAuditMapper.class)
+public interface FgProcessDecisionAuditDao {
+
+    @SqlQuery("SELECT * FROM FG_PROCESS_DECISION_AUDIT")
+    public List<FgProcessDecisionAudit> findAll();
+
+    @SqlQuery("SELECT * FROM FG_PROCESS_DECISION_AUDIT WHERE id = :id")
+    public Optional<FgProcessDecisionAudit> findById(@Bind("id") String id);
+
+    @SqlUpdate("INSERT INTO FG_PROCESS_DECISION_AUDIT(ID, REFERENCE_ID, TYPE_CODE, SUB_TYPE_CODE, ACTIVE_CODE, STAGE_CODE, STATUS_CODE, PROCESS_ID, CREATED_ON, CREATED_BY, LAST_UPDATED_ON, LAST_UPDATED_BY, LAST_AUTHORISED_ON, LAST_AUTHORISED_BY, TEMPLATE, APPLICANT_PARTY, FULFILLMENT_PARTY, IS_TEMPLATE, DECISION_DEF_ID, DECISION_OUTPUT_HASH, DECISION_OUTPUT_RULE, LAST_EVALUATION_TIME, PERF_PARTY_CODE, WF_PROCESS_DEF_ID) VALUES (:ID, :REFERENCE_ID, :TYPE_CODE, :SUB_TYPE_CODE, :ACTIVE_CODE, :STAGE_CODE, :STATUS_CODE, :PROCESS_ID, :CREATED_ON, :CREATED_BY, :LAST_UPDATED_ON, :LAST_UPDATED_BY, :LAST_AUTHORISED_ON, :LAST_AUTHORISED_BY, :TEMPLATE, :APPLICANT_PARTY, :FULFILLMENT_PARTY, :IS_TEMPLATE, :DECISION_DEF_ID, :DECISION_OUTPUT_HASH, :DECISION_OUTPUT_RULE, :LAST_EVALUATION_TIME, :PERF_PARTY_CODE, :WF_PROCESS_DEF_ID)")
+    @GetGeneratedKeys()
+    public String insert(@BindBean() FgProcessDecisionAudit entity);
+
+    @SqlQuery("UPDATE FG_PROCESS_DECISION_AUDIT SET ID = :ID, REFERENCE_ID = :REFERENCE_ID, TYPE_CODE = :TYPE_CODE, SUB_TYPE_CODE = :SUB_TYPE_CODE, ACTIVE_CODE = :ACTIVE_CODE, STAGE_CODE = :STAGE_CODE, STATUS_CODE = :STATUS_CODE, PROCESS_ID = :PROCESS_ID, CREATED_ON = :CREATED_ON, CREATED_BY = :CREATED_BY, LAST_UPDATED_ON = :LAST_UPDATED_ON, LAST_UPDATED_BY = :LAST_UPDATED_BY, LAST_AUTHORISED_ON = :LAST_AUTHORISED_ON, LAST_AUTHORISED_BY = :LAST_AUTHORISED_BY, TEMPLATE = :TEMPLATE, APPLICANT_PARTY = :APPLICANT_PARTY, FULFILLMENT_PARTY = :FULFILLMENT_PARTY, IS_TEMPLATE = :IS_TEMPLATE, DECISION_DEF_ID = :DECISION_DEF_ID, DECISION_OUTPUT_HASH = :DECISION_OUTPUT_HASH, DECISION_OUTPUT_RULE = :DECISION_OUTPUT_RULE, LAST_EVALUATION_TIME = :LAST_EVALUATION_TIME, PERF_PARTY_CODE = :PERF_PARTY_CODE, WF_PROCESS_DEF_ID = :WF_PROCESS_DEF_ID WHERE id = :id")
+    public int update(@BindBean() FgProcessDecisionAudit entity);
+
+    @SqlQuery("DELETE FROM FG_PROCESS_DECISION_AUDIT WHERE id = :id")
+    public int delete(@Bind("id") String id);
+}

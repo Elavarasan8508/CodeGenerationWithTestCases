@@ -1,0 +1,31 @@
+package com.bsit.codegeneration.dao;
+
+import org.jdbi.v3.sqlobject.statement.SqlQuery;
+import org.jdbi.v3.sqlobject.statement.SqlUpdate;
+import org.jdbi.v3.sqlobject.statement.GetGeneratedKeys;
+import org.jdbi.v3.sqlobject.customizer.Bind;
+import org.jdbi.v3.sqlobject.customizer.BindBean;
+import org.jdbi.v3.sqlobject.config.RegisterRowMapper;
+import com.bsit.codegeneration.record.FgModEiFile;
+import com.bsit.codegeneration.mapper.FgModEiFileMapper;
+import java.util.*;
+
+@RegisterRowMapper(FgModEiFileMapper.class)
+public interface FgModEiFileDao {
+
+    @SqlQuery("SELECT * FROM FG_MOD_EI_FILE")
+    public List<FgModEiFile> findAll();
+
+    @SqlQuery("SELECT * FROM FG_MOD_EI_FILE WHERE id = :id")
+    public Optional<FgModEiFile> findById(@Bind("id") Long id);
+
+    @SqlUpdate("INSERT INTO FG_MOD_EI_FILE(ID, REFERENCE_ID, PARTY_REF_ID, PARTY_VERSION_ID, ENTITY_REF_ID, ENTITY_VERSION_ID, EVENT_CODE, EVENT_DIRECTION_CODE, ENDPOINT_CODE, ENDPOINT_PATH, ENDPOINT_DIRECTORY, FILE_NAME, TOTAL_COUNT, SUCCESS_COUNT, ERROR_COUNT, CATEGORY_CODE, ACTIVE_CODE, STATUS_CODE, CREATED_ON, CREATED_BY, LAST_UPDATED_ON, LAST_UPDATED_BY, LAST_AUTHORISED_ON, LAST_AUTHORISED_BY) VALUES (:ID, :REFERENCE_ID, :PARTY_REF_ID, :PARTY_VERSION_ID, :ENTITY_REF_ID, :ENTITY_VERSION_ID, :EVENT_CODE, :EVENT_DIRECTION_CODE, :ENDPOINT_CODE, :ENDPOINT_PATH, :ENDPOINT_DIRECTORY, :FILE_NAME, :TOTAL_COUNT, :SUCCESS_COUNT, :ERROR_COUNT, :CATEGORY_CODE, :ACTIVE_CODE, :STATUS_CODE, :CREATED_ON, :CREATED_BY, :LAST_UPDATED_ON, :LAST_UPDATED_BY, :LAST_AUTHORISED_ON, :LAST_AUTHORISED_BY)")
+    @GetGeneratedKeys()
+    public Long insert(@BindBean() FgModEiFile entity);
+
+    @SqlQuery("UPDATE FG_MOD_EI_FILE SET ID = :ID, REFERENCE_ID = :REFERENCE_ID, PARTY_REF_ID = :PARTY_REF_ID, PARTY_VERSION_ID = :PARTY_VERSION_ID, ENTITY_REF_ID = :ENTITY_REF_ID, ENTITY_VERSION_ID = :ENTITY_VERSION_ID, EVENT_CODE = :EVENT_CODE, EVENT_DIRECTION_CODE = :EVENT_DIRECTION_CODE, ENDPOINT_CODE = :ENDPOINT_CODE, ENDPOINT_PATH = :ENDPOINT_PATH, ENDPOINT_DIRECTORY = :ENDPOINT_DIRECTORY, FILE_NAME = :FILE_NAME, TOTAL_COUNT = :TOTAL_COUNT, SUCCESS_COUNT = :SUCCESS_COUNT, ERROR_COUNT = :ERROR_COUNT, CATEGORY_CODE = :CATEGORY_CODE, ACTIVE_CODE = :ACTIVE_CODE, STATUS_CODE = :STATUS_CODE, CREATED_ON = :CREATED_ON, CREATED_BY = :CREATED_BY, LAST_UPDATED_ON = :LAST_UPDATED_ON, LAST_UPDATED_BY = :LAST_UPDATED_BY, LAST_AUTHORISED_ON = :LAST_AUTHORISED_ON, LAST_AUTHORISED_BY = :LAST_AUTHORISED_BY WHERE id = :id")
+    public int update(@BindBean() FgModEiFile entity);
+
+    @SqlQuery("DELETE FROM FG_MOD_EI_FILE WHERE id = :id")
+    public int delete(@Bind("id") Long id);
+}

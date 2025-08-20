@@ -1,0 +1,1 @@
+public record StaffJdbcRecord(Integer staffId, String firstName, String lastName, Integer addressId, String picture, String email, Integer storeId, String active, String username, String password, java.sql.Timestamp lastUpdate) {}

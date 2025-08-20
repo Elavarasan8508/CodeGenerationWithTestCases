@@ -1,0 +1,31 @@
+package com.bsit.codegeneration.dao;
+
+import org.jdbi.v3.sqlobject.statement.SqlQuery;
+import org.jdbi.v3.sqlobject.statement.SqlUpdate;
+import org.jdbi.v3.sqlobject.statement.GetGeneratedKeys;
+import org.jdbi.v3.sqlobject.customizer.Bind;
+import org.jdbi.v3.sqlobject.customizer.BindBean;
+import org.jdbi.v3.sqlobject.config.RegisterRowMapper;
+import com.bsit.codegeneration.record.FgUser;
+import com.bsit.codegeneration.mapper.FgUserMapper;
+import java.util.*;
+
+@RegisterRowMapper(FgUserMapper.class)
+public interface FgUserDao {
+
+    @SqlQuery("SELECT * FROM FG_USER")
+    public List<FgUser> findAll();
+
+    @SqlQuery("SELECT * FROM FG_USER WHERE id = :id")
+    public Optional<FgUser> findById(@Bind("id") Long id);
+
+    @SqlUpdate("INSERT INTO FG_USER(ID, USER_PASSWORD, USER_SECRET, USER_TYPE_CODE, PARTY_ID, PARTY_VERSION_ID, IS_USING_2FA, FIRST_TIME_LOGIN, LOGIN_ATTEMPTS, ACTIVE_CODE, STATUS_CODE, CREATED_ON, CREATED_BY, LAST_UPDATED_ON, LAST_UPDATED_BY, USER_ID, LAST_AUTHORISED_ON, LAST_AUTHORISED_BY, IS_AUTHORISE_OWN_TNX, LAST_LOGIN_TIME, CURRENT_LOGIN_TIME, LAST_LOGOUT_TIME, CURR_SESSION_ID, LAST_SESSION_ID) VALUES (:ID, :USER_PASSWORD, :USER_SECRET, :USER_TYPE_CODE, :PARTY_ID, :PARTY_VERSION_ID, :IS_USING_2FA, :FIRST_TIME_LOGIN, :LOGIN_ATTEMPTS, :ACTIVE_CODE, :STATUS_CODE, :CREATED_ON, :CREATED_BY, :LAST_UPDATED_ON, :LAST_UPDATED_BY, :USER_ID, :LAST_AUTHORISED_ON, :LAST_AUTHORISED_BY, :IS_AUTHORISE_OWN_TNX, :LAST_LOGIN_TIME, :CURRENT_LOGIN_TIME, :LAST_LOGOUT_TIME, :CURR_SESSION_ID, :LAST_SESSION_ID)")
+    @GetGeneratedKeys()
+    public Long insert(@BindBean() FgUser entity);
+
+    @SqlQuery("UPDATE FG_USER SET ID = :ID, USER_PASSWORD = :USER_PASSWORD, USER_SECRET = :USER_SECRET, USER_TYPE_CODE = :USER_TYPE_CODE, PARTY_ID = :PARTY_ID, PARTY_VERSION_ID = :PARTY_VERSION_ID, IS_USING_2FA = :IS_USING_2FA, FIRST_TIME_LOGIN = :FIRST_TIME_LOGIN, LOGIN_ATTEMPTS = :LOGIN_ATTEMPTS, ACTIVE_CODE = :ACTIVE_CODE, STATUS_CODE = :STATUS_CODE, CREATED_ON = :CREATED_ON, CREATED_BY = :CREATED_BY, LAST_UPDATED_ON = :LAST_UPDATED_ON, LAST_UPDATED_BY = :LAST_UPDATED_BY, USER_ID = :USER_ID, LAST_AUTHORISED_ON = :LAST_AUTHORISED_ON, LAST_AUTHORISED_BY = :LAST_AUTHORISED_BY, IS_AUTHORISE_OWN_TNX = :IS_AUTHORISE_OWN_TNX, LAST_LOGIN_TIME = :LAST_LOGIN_TIME, CURRENT_LOGIN_TIME = :CURRENT_LOGIN_TIME, LAST_LOGOUT_TIME = :LAST_LOGOUT_TIME, CURR_SESSION_ID = :CURR_SESSION_ID, LAST_SESSION_ID = :LAST_SESSION_ID WHERE id = :id")
+    public int update(@BindBean() FgUser entity);
+
+    @SqlQuery("DELETE FROM FG_USER WHERE id = :id")
+    public int delete(@Bind("id") Long id);
+}

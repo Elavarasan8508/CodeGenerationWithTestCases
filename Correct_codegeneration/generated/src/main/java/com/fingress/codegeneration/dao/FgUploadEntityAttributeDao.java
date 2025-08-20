@@ -1,0 +1,31 @@
+package com.bsit.codegeneration.dao;
+
+import org.jdbi.v3.sqlobject.statement.SqlQuery;
+import org.jdbi.v3.sqlobject.statement.SqlUpdate;
+import org.jdbi.v3.sqlobject.statement.GetGeneratedKeys;
+import org.jdbi.v3.sqlobject.customizer.Bind;
+import org.jdbi.v3.sqlobject.customizer.BindBean;
+import org.jdbi.v3.sqlobject.config.RegisterRowMapper;
+import com.bsit.codegeneration.record.FgUploadEntityAttribute;
+import com.bsit.codegeneration.mapper.FgUploadEntityAttributeMapper;
+import java.util.*;
+
+@RegisterRowMapper(FgUploadEntityAttributeMapper.class)
+public interface FgUploadEntityAttributeDao {
+
+    @SqlQuery("SELECT * FROM FG_UPLOAD_ENTITY_ATTRIBUTE")
+    public List<FgUploadEntityAttribute> findAll();
+
+    @SqlQuery("SELECT * FROM FG_UPLOAD_ENTITY_ATTRIBUTE WHERE id = :id")
+    public Optional<FgUploadEntityAttribute> findById(@Bind("id") String id);
+
+    @SqlUpdate("INSERT INTO FG_UPLOAD_ENTITY_ATTRIBUTE(ID, REFERENCE_ID, TYPE_CODE, SUB_TYPE_CODE, ACTIVE_CODE, STAGE_CODE, STATUS_CODE, CREATED_ON, CREATED_BY, LAST_UPDATED_ON, LAST_UPDATED_BY, LAST_AUTHORISED_ON, LAST_AUTHORISED_BY, TEMPLATE, IS_TEMPLATE, REL_CATEGORY, REL_ENTITY_TYPE, REL_ENTITY_REF_NO, REL_ENTY_REF_VERSION, REL_ATTRIBUTE_TYPE, REL_ATTRIBUTE_KEY, REL_ATTRIBUTE_VALUE, UPLOAD_REF_NO, REL_ENTITY_SUB_TYPE, REL_ENTITY_ATTRIBUTE) VALUES (:ID, :REFERENCE_ID, :TYPE_CODE, :SUB_TYPE_CODE, :ACTIVE_CODE, :STAGE_CODE, :STATUS_CODE, :CREATED_ON, :CREATED_BY, :LAST_UPDATED_ON, :LAST_UPDATED_BY, :LAST_AUTHORISED_ON, :LAST_AUTHORISED_BY, :TEMPLATE, :IS_TEMPLATE, :REL_CATEGORY, :REL_ENTITY_TYPE, :REL_ENTITY_REF_NO, :REL_ENTY_REF_VERSION, :REL_ATTRIBUTE_TYPE, :REL_ATTRIBUTE_KEY, :REL_ATTRIBUTE_VALUE, :UPLOAD_REF_NO, :REL_ENTITY_SUB_TYPE, :REL_ENTITY_ATTRIBUTE)")
+    @GetGeneratedKeys()
+    public String insert(@BindBean() FgUploadEntityAttribute entity);
+
+    @SqlQuery("UPDATE FG_UPLOAD_ENTITY_ATTRIBUTE SET ID = :ID, REFERENCE_ID = :REFERENCE_ID, TYPE_CODE = :TYPE_CODE, SUB_TYPE_CODE = :SUB_TYPE_CODE, ACTIVE_CODE = :ACTIVE_CODE, STAGE_CODE = :STAGE_CODE, STATUS_CODE = :STATUS_CODE, CREATED_ON = :CREATED_ON, CREATED_BY = :CREATED_BY, LAST_UPDATED_ON = :LAST_UPDATED_ON, LAST_UPDATED_BY = :LAST_UPDATED_BY, LAST_AUTHORISED_ON = :LAST_AUTHORISED_ON, LAST_AUTHORISED_BY = :LAST_AUTHORISED_BY, TEMPLATE = :TEMPLATE, IS_TEMPLATE = :IS_TEMPLATE, REL_CATEGORY = :REL_CATEGORY, REL_ENTITY_TYPE = :REL_ENTITY_TYPE, REL_ENTITY_REF_NO = :REL_ENTITY_REF_NO, REL_ENTY_REF_VERSION = :REL_ENTY_REF_VERSION, REL_ATTRIBUTE_TYPE = :REL_ATTRIBUTE_TYPE, REL_ATTRIBUTE_KEY = :REL_ATTRIBUTE_KEY, REL_ATTRIBUTE_VALUE = :REL_ATTRIBUTE_VALUE, UPLOAD_REF_NO = :UPLOAD_REF_NO, REL_ENTITY_SUB_TYPE = :REL_ENTITY_SUB_TYPE, REL_ENTITY_ATTRIBUTE = :REL_ENTITY_ATTRIBUTE WHERE id = :id")
+    public int update(@BindBean() FgUploadEntityAttribute entity);
+
+    @SqlQuery("DELETE FROM FG_UPLOAD_ENTITY_ATTRIBUTE WHERE id = :id")
+    public int delete(@Bind("id") String id);
+}

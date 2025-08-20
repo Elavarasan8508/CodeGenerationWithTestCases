@@ -1,0 +1,31 @@
+package com.bsit.codegeneration.dao;
+
+import org.jdbi.v3.sqlobject.statement.SqlQuery;
+import org.jdbi.v3.sqlobject.statement.SqlUpdate;
+import org.jdbi.v3.sqlobject.statement.GetGeneratedKeys;
+import org.jdbi.v3.sqlobject.customizer.Bind;
+import org.jdbi.v3.sqlobject.customizer.BindBean;
+import org.jdbi.v3.sqlobject.config.RegisterRowMapper;
+import com.bsit.codegeneration.record.FgModBatch;
+import com.bsit.codegeneration.mapper.FgModBatchMapper;
+import java.util.*;
+
+@RegisterRowMapper(FgModBatchMapper.class)
+public interface FgModBatchDao {
+
+    @SqlQuery("SELECT * FROM FG_MOD_BATCH")
+    public List<FgModBatch> findAll();
+
+    @SqlQuery("SELECT * FROM FG_MOD_BATCH WHERE id = :id")
+    public Optional<FgModBatch> findById(@Bind("id") Long id);
+
+    @SqlUpdate("INSERT INTO FG_MOD_BATCH(ID, REFERENCE_ID, TYPE_CODE, SUB_TYPE_CODE, ACTIVE_CODE, STAGE_CODE, STATUS_CODE, CREATED_ON, CREATED_BY, LAST_UPDATED_ON, LAST_UPDATED_BY, LAST_AUTHORISED_ON, LAST_AUTHORISED_BY, TEMPLATE, IS_TEMPLATE, VERSION_ID, IS_MASTER_VERSION, PROCESS_ID, COMMENTS, PURPOSE_CODE, TOTAL_AMOUNT, TOTAL_COUNT, SOURCE_REF_ID, APPLICANT_PARTY_CODE, FINANCE_DISPLAY_STATUS, PROGRAM_CODE) VALUES (:ID, :REFERENCE_ID, :TYPE_CODE, :SUB_TYPE_CODE, :ACTIVE_CODE, :STAGE_CODE, :STATUS_CODE, :CREATED_ON, :CREATED_BY, :LAST_UPDATED_ON, :LAST_UPDATED_BY, :LAST_AUTHORISED_ON, :LAST_AUTHORISED_BY, :TEMPLATE, :IS_TEMPLATE, :VERSION_ID, :IS_MASTER_VERSION, :PROCESS_ID, :COMMENTS, :PURPOSE_CODE, :TOTAL_AMOUNT, :TOTAL_COUNT, :SOURCE_REF_ID, :APPLICANT_PARTY_CODE, :FINANCE_DISPLAY_STATUS, :PROGRAM_CODE)")
+    @GetGeneratedKeys()
+    public Long insert(@BindBean() FgModBatch entity);
+
+    @SqlQuery("UPDATE FG_MOD_BATCH SET ID = :ID, REFERENCE_ID = :REFERENCE_ID, TYPE_CODE = :TYPE_CODE, SUB_TYPE_CODE = :SUB_TYPE_CODE, ACTIVE_CODE = :ACTIVE_CODE, STAGE_CODE = :STAGE_CODE, STATUS_CODE = :STATUS_CODE, CREATED_ON = :CREATED_ON, CREATED_BY = :CREATED_BY, LAST_UPDATED_ON = :LAST_UPDATED_ON, LAST_UPDATED_BY = :LAST_UPDATED_BY, LAST_AUTHORISED_ON = :LAST_AUTHORISED_ON, LAST_AUTHORISED_BY = :LAST_AUTHORISED_BY, TEMPLATE = :TEMPLATE, IS_TEMPLATE = :IS_TEMPLATE, VERSION_ID = :VERSION_ID, IS_MASTER_VERSION = :IS_MASTER_VERSION, PROCESS_ID = :PROCESS_ID, COMMENTS = :COMMENTS, PURPOSE_CODE = :PURPOSE_CODE, TOTAL_AMOUNT = :TOTAL_AMOUNT, TOTAL_COUNT = :TOTAL_COUNT, SOURCE_REF_ID = :SOURCE_REF_ID, APPLICANT_PARTY_CODE = :APPLICANT_PARTY_CODE, FINANCE_DISPLAY_STATUS = :FINANCE_DISPLAY_STATUS, PROGRAM_CODE = :PROGRAM_CODE WHERE id = :id")
+    public int update(@BindBean() FgModBatch entity);
+
+    @SqlQuery("DELETE FROM FG_MOD_BATCH WHERE id = :id")
+    public int delete(@Bind("id") Long id);
+}

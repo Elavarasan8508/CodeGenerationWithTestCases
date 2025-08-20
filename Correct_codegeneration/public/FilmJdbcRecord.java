@@ -1,0 +1,1 @@
+public record FilmJdbcRecord(Integer filmId, String title, String description, String releaseYear, Integer languageId, Integer originalLanguageId, Integer rentalDuration, String rentalRate, Integer length, String replacementCost, String rating, String specialFeatures, java.sql.Timestamp lastUpdate) {}

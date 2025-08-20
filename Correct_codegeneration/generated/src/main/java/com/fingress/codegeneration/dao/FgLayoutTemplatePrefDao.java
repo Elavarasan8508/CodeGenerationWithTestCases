@@ -1,0 +1,31 @@
+package com.bsit.codegeneration.dao;
+
+import org.jdbi.v3.sqlobject.statement.SqlQuery;
+import org.jdbi.v3.sqlobject.statement.SqlUpdate;
+import org.jdbi.v3.sqlobject.statement.GetGeneratedKeys;
+import org.jdbi.v3.sqlobject.customizer.Bind;
+import org.jdbi.v3.sqlobject.customizer.BindBean;
+import org.jdbi.v3.sqlobject.config.RegisterRowMapper;
+import com.bsit.codegeneration.record.FgLayoutTemplatePref;
+import com.bsit.codegeneration.mapper.FgLayoutTemplatePrefMapper;
+import java.util.*;
+
+@RegisterRowMapper(FgLayoutTemplatePrefMapper.class)
+public interface FgLayoutTemplatePrefDao {
+
+    @SqlQuery("SELECT * FROM FG_LAYOUT_TEMPLATE_PREF")
+    public List<FgLayoutTemplatePref> findAll();
+
+    @SqlQuery("SELECT * FROM FG_LAYOUT_TEMPLATE_PREF WHERE id = :id")
+    public Optional<FgLayoutTemplatePref> findById(@Bind("id") String id);
+
+    @SqlUpdate("INSERT INTO FG_LAYOUT_TEMPLATE_PREF(ID, REFERENCE_ID, TYPE_CODE, SUB_TYPE_CODE, ACTIVE_CODE, STAGE_CODE, STATUS_CODE, PROCESS_ID, CREATED_ON, CREATED_BY, LAST_UPDATED_ON, LAST_UPDATED_BY, LAST_AUTHORISED_ON, LAST_AUTHORISED_BY, TEMPLATE, APPLICANT_PARTY, FULFILLMENT_PARTY, UPLOAD_REF_ID, ATTACHMENT_ID, PARENT_ID, PARENT_REF_ID, PARENT_VERSION_ID, IS_TEMPLATE, USER_CODE, PARTY_CODE, PAGE_ID, COMPONENT_ID, ENTITY_TYPE_CODE) VALUES (:ID, :REFERENCE_ID, :TYPE_CODE, :SUB_TYPE_CODE, :ACTIVE_CODE, :STAGE_CODE, :STATUS_CODE, :PROCESS_ID, :CREATED_ON, :CREATED_BY, :LAST_UPDATED_ON, :LAST_UPDATED_BY, :LAST_AUTHORISED_ON, :LAST_AUTHORISED_BY, :TEMPLATE, :APPLICANT_PARTY, :FULFILLMENT_PARTY, :UPLOAD_REF_ID, :ATTACHMENT_ID, :PARENT_ID, :PARENT_REF_ID, :PARENT_VERSION_ID, :IS_TEMPLATE, :USER_CODE, :PARTY_CODE, :PAGE_ID, :COMPONENT_ID, :ENTITY_TYPE_CODE)")
+    @GetGeneratedKeys()
+    public String insert(@BindBean() FgLayoutTemplatePref entity);
+
+    @SqlQuery("UPDATE FG_LAYOUT_TEMPLATE_PREF SET ID = :ID, REFERENCE_ID = :REFERENCE_ID, TYPE_CODE = :TYPE_CODE, SUB_TYPE_CODE = :SUB_TYPE_CODE, ACTIVE_CODE = :ACTIVE_CODE, STAGE_CODE = :STAGE_CODE, STATUS_CODE = :STATUS_CODE, PROCESS_ID = :PROCESS_ID, CREATED_ON = :CREATED_ON, CREATED_BY = :CREATED_BY, LAST_UPDATED_ON = :LAST_UPDATED_ON, LAST_UPDATED_BY = :LAST_UPDATED_BY, LAST_AUTHORISED_ON = :LAST_AUTHORISED_ON, LAST_AUTHORISED_BY = :LAST_AUTHORISED_BY, TEMPLATE = :TEMPLATE, APPLICANT_PARTY = :APPLICANT_PARTY, FULFILLMENT_PARTY = :FULFILLMENT_PARTY, UPLOAD_REF_ID = :UPLOAD_REF_ID, ATTACHMENT_ID = :ATTACHMENT_ID, PARENT_ID = :PARENT_ID, PARENT_REF_ID = :PARENT_REF_ID, PARENT_VERSION_ID = :PARENT_VERSION_ID, IS_TEMPLATE = :IS_TEMPLATE, USER_CODE = :USER_CODE, PARTY_CODE = :PARTY_CODE, PAGE_ID = :PAGE_ID, COMPONENT_ID = :COMPONENT_ID, ENTITY_TYPE_CODE = :ENTITY_TYPE_CODE WHERE id = :id")
+    public int update(@BindBean() FgLayoutTemplatePref entity);
+
+    @SqlQuery("DELETE FROM FG_LAYOUT_TEMPLATE_PREF WHERE id = :id")
+    public int delete(@Bind("id") String id);
+}

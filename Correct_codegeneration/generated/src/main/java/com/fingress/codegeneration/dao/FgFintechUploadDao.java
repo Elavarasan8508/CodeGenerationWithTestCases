@@ -1,0 +1,31 @@
+package com.bsit.codegeneration.dao;
+
+import org.jdbi.v3.sqlobject.statement.SqlQuery;
+import org.jdbi.v3.sqlobject.statement.SqlUpdate;
+import org.jdbi.v3.sqlobject.statement.GetGeneratedKeys;
+import org.jdbi.v3.sqlobject.customizer.Bind;
+import org.jdbi.v3.sqlobject.customizer.BindBean;
+import org.jdbi.v3.sqlobject.config.RegisterRowMapper;
+import com.bsit.codegeneration.record.FgFintechUpload;
+import com.bsit.codegeneration.mapper.FgFintechUploadMapper;
+import java.util.*;
+
+@RegisterRowMapper(FgFintechUploadMapper.class)
+public interface FgFintechUploadDao {
+
+    @SqlQuery("SELECT * FROM FG_FINTECH_UPLOAD")
+    public List<FgFintechUpload> findAll();
+
+    @SqlQuery("SELECT * FROM FG_FINTECH_UPLOAD WHERE id = :id")
+    public Optional<FgFintechUpload> findById(@Bind("id") String id);
+
+    @SqlUpdate("INSERT INTO FG_FINTECH_UPLOAD(ID, REFERENCE_ID, TYPE_CODE, SUB_TYPE_CODE, ACTIVE_CODE, STAGE_CODE, STATUS_CODE, PROCESS_ID, CREATED_ON, CREATED_BY, LAST_UPDATED_ON, LAST_UPDATED_BY, LAST_AUTHORISED_ON, LAST_AUTHORISED_BY, TEMPLATE, APPLICANT_PARTY_CODE, ISSUING_PARTY_CODE, IS_TEMPLATE, CHANNELS, TRANSFER_STATUS, LAYOUT_TEMPLATE_ID, LAYOUT_NAME, FILECONTENT, UPLOAD_REF_ID, FILE_NAME, DMS_EVENT_ID, REMARKS) VALUES (:ID, :REFERENCE_ID, :TYPE_CODE, :SUB_TYPE_CODE, :ACTIVE_CODE, :STAGE_CODE, :STATUS_CODE, :PROCESS_ID, :CREATED_ON, :CREATED_BY, :LAST_UPDATED_ON, :LAST_UPDATED_BY, :LAST_AUTHORISED_ON, :LAST_AUTHORISED_BY, :TEMPLATE, :APPLICANT_PARTY_CODE, :ISSUING_PARTY_CODE, :IS_TEMPLATE, :CHANNELS, :TRANSFER_STATUS, :LAYOUT_TEMPLATE_ID, :LAYOUT_NAME, :FILECONTENT, :UPLOAD_REF_ID, :FILE_NAME, :DMS_EVENT_ID, :REMARKS)")
+    @GetGeneratedKeys()
+    public String insert(@BindBean() FgFintechUpload entity);
+
+    @SqlQuery("UPDATE FG_FINTECH_UPLOAD SET ID = :ID, REFERENCE_ID = :REFERENCE_ID, TYPE_CODE = :TYPE_CODE, SUB_TYPE_CODE = :SUB_TYPE_CODE, ACTIVE_CODE = :ACTIVE_CODE, STAGE_CODE = :STAGE_CODE, STATUS_CODE = :STATUS_CODE, PROCESS_ID = :PROCESS_ID, CREATED_ON = :CREATED_ON, CREATED_BY = :CREATED_BY, LAST_UPDATED_ON = :LAST_UPDATED_ON, LAST_UPDATED_BY = :LAST_UPDATED_BY, LAST_AUTHORISED_ON = :LAST_AUTHORISED_ON, LAST_AUTHORISED_BY = :LAST_AUTHORISED_BY, TEMPLATE = :TEMPLATE, APPLICANT_PARTY_CODE = :APPLICANT_PARTY_CODE, ISSUING_PARTY_CODE = :ISSUING_PARTY_CODE, IS_TEMPLATE = :IS_TEMPLATE, CHANNELS = :CHANNELS, TRANSFER_STATUS = :TRANSFER_STATUS, LAYOUT_TEMPLATE_ID = :LAYOUT_TEMPLATE_ID, LAYOUT_NAME = :LAYOUT_NAME, FILECONTENT = :FILECONTENT, UPLOAD_REF_ID = :UPLOAD_REF_ID, FILE_NAME = :FILE_NAME, DMS_EVENT_ID = :DMS_EVENT_ID, REMARKS = :REMARKS WHERE id = :id")
+    public int update(@BindBean() FgFintechUpload entity);
+
+    @SqlQuery("DELETE FROM FG_FINTECH_UPLOAD WHERE id = :id")
+    public int delete(@Bind("id") String id);
+}

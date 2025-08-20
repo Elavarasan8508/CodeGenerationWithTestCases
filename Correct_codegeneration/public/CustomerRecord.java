@@ -1,0 +1,1 @@
+public record CustomerRecord(Integer customerId, Integer storeId, String firstName, String lastName, String email, Integer addressId, String active, java.sql.Date createDate, java.sql.Timestamp lastUpdate) {}

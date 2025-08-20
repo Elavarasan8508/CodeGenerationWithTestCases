@@ -1,0 +1,31 @@
+package com.bsit.codegeneration.dao;
+
+import org.jdbi.v3.sqlobject.statement.SqlQuery;
+import org.jdbi.v3.sqlobject.statement.SqlUpdate;
+import org.jdbi.v3.sqlobject.statement.GetGeneratedKeys;
+import org.jdbi.v3.sqlobject.customizer.Bind;
+import org.jdbi.v3.sqlobject.customizer.BindBean;
+import org.jdbi.v3.sqlobject.config.RegisterRowMapper;
+import com.bsit.codegeneration.record.LmsMdmConfig;
+import com.bsit.codegeneration.mapper.LmsMdmConfigMapper;
+import java.util.*;
+
+@RegisterRowMapper(LmsMdmConfigMapper.class)
+public interface LmsMdmConfigDao {
+
+    @SqlQuery("SELECT * FROM LMS_MDM_CONFIG")
+    public List<LmsMdmConfig> findAll();
+
+    @SqlQuery("SELECT * FROM LMS_MDM_CONFIG WHERE id = :id")
+    public Optional<LmsMdmConfig> findById(@Bind("id") String id);
+
+    @SqlUpdate("INSERT INTO LMS_MDM_CONFIG(ID, REFERENCE_ID, TYPE_CODE, SUB_TYPE_CODE, ACTIVE_CODE, STAGE_CODE, STATUS_CODE, PROCESS_ID, CREATED_ON, CREATED_BY, LAST_UPDATED_ON, LAST_UPDATED_BY, LAST_AUTHORISED_ON, LAST_AUTHORISED_BY, TEMPLATE, APPLICANT_PARTY, FULFILLMENT_PARTY, IS_TEMPLATE, ENTITY_TYPE, ROLE_TYPE, NO_OF_DAYS, REJECT_HOUR, REJECT_MINUTE, DESCRIPTION, REJECT_TIME, VERSION_ID, IS_MASTER_VERSION) VALUES (:ID, :REFERENCE_ID, :TYPE_CODE, :SUB_TYPE_CODE, :ACTIVE_CODE, :STAGE_CODE, :STATUS_CODE, :PROCESS_ID, :CREATED_ON, :CREATED_BY, :LAST_UPDATED_ON, :LAST_UPDATED_BY, :LAST_AUTHORISED_ON, :LAST_AUTHORISED_BY, :TEMPLATE, :APPLICANT_PARTY, :FULFILLMENT_PARTY, :IS_TEMPLATE, :ENTITY_TYPE, :ROLE_TYPE, :NO_OF_DAYS, :REJECT_HOUR, :REJECT_MINUTE, :DESCRIPTION, :REJECT_TIME, :VERSION_ID, :IS_MASTER_VERSION)")
+    @GetGeneratedKeys()
+    public String insert(@BindBean() LmsMdmConfig entity);
+
+    @SqlQuery("UPDATE LMS_MDM_CONFIG SET ID = :ID, REFERENCE_ID = :REFERENCE_ID, TYPE_CODE = :TYPE_CODE, SUB_TYPE_CODE = :SUB_TYPE_CODE, ACTIVE_CODE = :ACTIVE_CODE, STAGE_CODE = :STAGE_CODE, STATUS_CODE = :STATUS_CODE, PROCESS_ID = :PROCESS_ID, CREATED_ON = :CREATED_ON, CREATED_BY = :CREATED_BY, LAST_UPDATED_ON = :LAST_UPDATED_ON, LAST_UPDATED_BY = :LAST_UPDATED_BY, LAST_AUTHORISED_ON = :LAST_AUTHORISED_ON, LAST_AUTHORISED_BY = :LAST_AUTHORISED_BY, TEMPLATE = :TEMPLATE, APPLICANT_PARTY = :APPLICANT_PARTY, FULFILLMENT_PARTY = :FULFILLMENT_PARTY, IS_TEMPLATE = :IS_TEMPLATE, ENTITY_TYPE = :ENTITY_TYPE, ROLE_TYPE = :ROLE_TYPE, NO_OF_DAYS = :NO_OF_DAYS, REJECT_HOUR = :REJECT_HOUR, REJECT_MINUTE = :REJECT_MINUTE, DESCRIPTION = :DESCRIPTION, REJECT_TIME = :REJECT_TIME, VERSION_ID = :VERSION_ID, IS_MASTER_VERSION = :IS_MASTER_VERSION WHERE id = :id")
+    public int update(@BindBean() LmsMdmConfig entity);
+
+    @SqlQuery("DELETE FROM LMS_MDM_CONFIG WHERE id = :id")
+    public int delete(@Bind("id") String id);
+}

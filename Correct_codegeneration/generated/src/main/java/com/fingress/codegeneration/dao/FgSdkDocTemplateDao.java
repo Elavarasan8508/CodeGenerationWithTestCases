@@ -1,0 +1,31 @@
+package com.bsit.codegeneration.dao;
+
+import org.jdbi.v3.sqlobject.statement.SqlQuery;
+import org.jdbi.v3.sqlobject.statement.SqlUpdate;
+import org.jdbi.v3.sqlobject.statement.GetGeneratedKeys;
+import org.jdbi.v3.sqlobject.customizer.Bind;
+import org.jdbi.v3.sqlobject.customizer.BindBean;
+import org.jdbi.v3.sqlobject.config.RegisterRowMapper;
+import com.bsit.codegeneration.record.FgSdkDocTemplate;
+import com.bsit.codegeneration.mapper.FgSdkDocTemplateMapper;
+import java.util.*;
+
+@RegisterRowMapper(FgSdkDocTemplateMapper.class)
+public interface FgSdkDocTemplateDao {
+
+    @SqlQuery("SELECT * FROM FG_SDK_DOC_TEMPLATE")
+    public List<FgSdkDocTemplate> findAll();
+
+    @SqlQuery("SELECT * FROM FG_SDK_DOC_TEMPLATE WHERE id = :id")
+    public Optional<FgSdkDocTemplate> findById(@Bind("id") String id);
+
+    @SqlUpdate("INSERT INTO FG_SDK_DOC_TEMPLATE(ID, REFERENCE_ID, APPLICANT_PARTY_CODE, APPLICANT_REF_ID, ISSUING_PARTY_CODE, TYPE_CODE, SUB_TYPE_CODE, ACTIVE_CODE, STAGE_CODE, STATUS_CODE, CREATED_ON, CREATED_BY, LAST_UPDATED_ON, LAST_UPDATED_BY, LAST_AUTHORISED_ON, LAST_AUTHORISED_BY, TEMPLATE, IS_TEMPLATE, PURPOSE, RENDER_TYPE, PARENT_TYPE, IS_DEFAULT, DESCRIPTION, TEMPLATE_TYPE, SAMPLE_JSON, DOC_TEMPLATE, NAME) VALUES (:ID, :REFERENCE_ID, :APPLICANT_PARTY_CODE, :APPLICANT_REF_ID, :ISSUING_PARTY_CODE, :TYPE_CODE, :SUB_TYPE_CODE, :ACTIVE_CODE, :STAGE_CODE, :STATUS_CODE, :CREATED_ON, :CREATED_BY, :LAST_UPDATED_ON, :LAST_UPDATED_BY, :LAST_AUTHORISED_ON, :LAST_AUTHORISED_BY, :TEMPLATE, :IS_TEMPLATE, :PURPOSE, :RENDER_TYPE, :PARENT_TYPE, :IS_DEFAULT, :DESCRIPTION, :TEMPLATE_TYPE, :SAMPLE_JSON, :DOC_TEMPLATE, :NAME)")
+    @GetGeneratedKeys()
+    public String insert(@BindBean() FgSdkDocTemplate entity);
+
+    @SqlQuery("UPDATE FG_SDK_DOC_TEMPLATE SET ID = :ID, REFERENCE_ID = :REFERENCE_ID, APPLICANT_PARTY_CODE = :APPLICANT_PARTY_CODE, APPLICANT_REF_ID = :APPLICANT_REF_ID, ISSUING_PARTY_CODE = :ISSUING_PARTY_CODE, TYPE_CODE = :TYPE_CODE, SUB_TYPE_CODE = :SUB_TYPE_CODE, ACTIVE_CODE = :ACTIVE_CODE, STAGE_CODE = :STAGE_CODE, STATUS_CODE = :STATUS_CODE, CREATED_ON = :CREATED_ON, CREATED_BY = :CREATED_BY, LAST_UPDATED_ON = :LAST_UPDATED_ON, LAST_UPDATED_BY = :LAST_UPDATED_BY, LAST_AUTHORISED_ON = :LAST_AUTHORISED_ON, LAST_AUTHORISED_BY = :LAST_AUTHORISED_BY, TEMPLATE = :TEMPLATE, IS_TEMPLATE = :IS_TEMPLATE, PURPOSE = :PURPOSE, RENDER_TYPE = :RENDER_TYPE, PARENT_TYPE = :PARENT_TYPE, IS_DEFAULT = :IS_DEFAULT, DESCRIPTION = :DESCRIPTION, TEMPLATE_TYPE = :TEMPLATE_TYPE, SAMPLE_JSON = :SAMPLE_JSON, DOC_TEMPLATE = :DOC_TEMPLATE, NAME = :NAME WHERE id = :id")
+    public int update(@BindBean() FgSdkDocTemplate entity);
+
+    @SqlQuery("DELETE FROM FG_SDK_DOC_TEMPLATE WHERE id = :id")
+    public int delete(@Bind("id") String id);
+}

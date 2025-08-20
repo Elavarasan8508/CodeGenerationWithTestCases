@@ -1,0 +1,31 @@
+package com.bsit.codegeneration.dao;
+
+import org.jdbi.v3.sqlobject.statement.SqlQuery;
+import org.jdbi.v3.sqlobject.statement.SqlUpdate;
+import org.jdbi.v3.sqlobject.statement.GetGeneratedKeys;
+import org.jdbi.v3.sqlobject.customizer.Bind;
+import org.jdbi.v3.sqlobject.customizer.BindBean;
+import org.jdbi.v3.sqlobject.config.RegisterRowMapper;
+import com.bsit.codegeneration.record.FgSecurityCredential;
+import com.bsit.codegeneration.mapper.FgSecurityCredentialMapper;
+import java.util.*;
+
+@RegisterRowMapper(FgSecurityCredentialMapper.class)
+public interface FgSecurityCredentialDao {
+
+    @SqlQuery("SELECT * FROM FG_SECURITY_CREDENTIAL")
+    public List<FgSecurityCredential> findAll();
+
+    @SqlQuery("SELECT * FROM FG_SECURITY_CREDENTIAL WHERE id = :id")
+    public Optional<FgSecurityCredential> findById(@Bind("id") Long id);
+
+    @SqlUpdate("INSERT INTO FG_SECURITY_CREDENTIAL(ID, PURPOSE_CODE, PARTY_CODE, PARTY_SUB_TYPE_CODE, USER_CODE, USER_SUB_TYPE_CODE, CREDENTIAL_TYPE_CODE, CREDENTIAL_VALUE, EXPIRES_ON, MOBILE_NO, IMEI_NO, DEVICE, DEVICE_ID, DEVICE_BRAND, DEVICE_MFCT, DEVICE_MODEL, DEVICE_PRODUCT, USER_NAME, ACTIVE_CODE, STATUS_CODE, CREATED_ON, CREATED_BY, LAST_UPDATED_ON, LAST_UPDATED_BY, LAST_AUTHORISED_ON, LAST_AUTHORISED_BY, CREDENTIAL_KEY) VALUES (:ID, :PURPOSE_CODE, :PARTY_CODE, :PARTY_SUB_TYPE_CODE, :USER_CODE, :USER_SUB_TYPE_CODE, :CREDENTIAL_TYPE_CODE, :CREDENTIAL_VALUE, :EXPIRES_ON, :MOBILE_NO, :IMEI_NO, :DEVICE, :DEVICE_ID, :DEVICE_BRAND, :DEVICE_MFCT, :DEVICE_MODEL, :DEVICE_PRODUCT, :USER_NAME, :ACTIVE_CODE, :STATUS_CODE, :CREATED_ON, :CREATED_BY, :LAST_UPDATED_ON, :LAST_UPDATED_BY, :LAST_AUTHORISED_ON, :LAST_AUTHORISED_BY, :CREDENTIAL_KEY)")
+    @GetGeneratedKeys()
+    public Long insert(@BindBean() FgSecurityCredential entity);
+
+    @SqlQuery("UPDATE FG_SECURITY_CREDENTIAL SET ID = :ID, PURPOSE_CODE = :PURPOSE_CODE, PARTY_CODE = :PARTY_CODE, PARTY_SUB_TYPE_CODE = :PARTY_SUB_TYPE_CODE, USER_CODE = :USER_CODE, USER_SUB_TYPE_CODE = :USER_SUB_TYPE_CODE, CREDENTIAL_TYPE_CODE = :CREDENTIAL_TYPE_CODE, CREDENTIAL_VALUE = :CREDENTIAL_VALUE, EXPIRES_ON = :EXPIRES_ON, MOBILE_NO = :MOBILE_NO, IMEI_NO = :IMEI_NO, DEVICE = :DEVICE, DEVICE_ID = :DEVICE_ID, DEVICE_BRAND = :DEVICE_BRAND, DEVICE_MFCT = :DEVICE_MFCT, DEVICE_MODEL = :DEVICE_MODEL, DEVICE_PRODUCT = :DEVICE_PRODUCT, USER_NAME = :USER_NAME, ACTIVE_CODE = :ACTIVE_CODE, STATUS_CODE = :STATUS_CODE, CREATED_ON = :CREATED_ON, CREATED_BY = :CREATED_BY, LAST_UPDATED_ON = :LAST_UPDATED_ON, LAST_UPDATED_BY = :LAST_UPDATED_BY, LAST_AUTHORISED_ON = :LAST_AUTHORISED_ON, LAST_AUTHORISED_BY = :LAST_AUTHORISED_BY, CREDENTIAL_KEY = :CREDENTIAL_KEY WHERE id = :id")
+    public int update(@BindBean() FgSecurityCredential entity);
+
+    @SqlQuery("DELETE FROM FG_SECURITY_CREDENTIAL WHERE id = :id")
+    public int delete(@Bind("id") Long id);
+}

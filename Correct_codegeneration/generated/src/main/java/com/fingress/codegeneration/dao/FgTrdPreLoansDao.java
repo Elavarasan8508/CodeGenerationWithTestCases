@@ -1,0 +1,31 @@
+package com.bsit.codegeneration.dao;
+
+import org.jdbi.v3.sqlobject.statement.SqlQuery;
+import org.jdbi.v3.sqlobject.statement.SqlUpdate;
+import org.jdbi.v3.sqlobject.statement.GetGeneratedKeys;
+import org.jdbi.v3.sqlobject.customizer.Bind;
+import org.jdbi.v3.sqlobject.customizer.BindBean;
+import org.jdbi.v3.sqlobject.config.RegisterRowMapper;
+import com.bsit.codegeneration.record.FgTrdPreLoans;
+import com.bsit.codegeneration.mapper.FgTrdPreLoansMapper;
+import java.util.*;
+
+@RegisterRowMapper(FgTrdPreLoansMapper.class)
+public interface FgTrdPreLoansDao {
+
+    @SqlQuery("SELECT * FROM FG_TRD_PRE_LOANS")
+    public List<FgTrdPreLoans> findAll();
+
+    @SqlQuery("SELECT * FROM FG_TRD_PRE_LOANS WHERE id = :id")
+    public Optional<FgTrdPreLoans> findById(@Bind("id") String id);
+
+    @SqlUpdate("INSERT INTO FG_TRD_PRE_LOANS(ID, REFERENCE_ID, TYPE_CODE, SUB_TYPE_CODE, ACTIVE_CODE, STAGE_CODE, STATUS_CODE, CREATED_ON, CREATED_BY, LAST_UPDATED_ON, LAST_UPDATED_BY, LAST_AUTHORISED_ON, LAST_AUTHORISED_BY, TEMPLATE, IS_TEMPLATE, PRE_LOAN_REF_ID, LOAN_REF_ID, CUR_CODE, PRINCIPAL_OUTSTANDING, IN_LOAN_CUR, DSP_AMT, EQU_DSP_AMT, PARENT_REF_ID, PARENT_VERSION_ID, IR_REFERENCE_ID, DISB_DATE, APPLICANT_PARTY, BILL_REF_ID) VALUES (:ID, :REFERENCE_ID, :TYPE_CODE, :SUB_TYPE_CODE, :ACTIVE_CODE, :STAGE_CODE, :STATUS_CODE, :CREATED_ON, :CREATED_BY, :LAST_UPDATED_ON, :LAST_UPDATED_BY, :LAST_AUTHORISED_ON, :LAST_AUTHORISED_BY, :TEMPLATE, :IS_TEMPLATE, :PRE_LOAN_REF_ID, :LOAN_REF_ID, :CUR_CODE, :PRINCIPAL_OUTSTANDING, :IN_LOAN_CUR, :DSP_AMT, :EQU_DSP_AMT, :PARENT_REF_ID, :PARENT_VERSION_ID, :IR_REFERENCE_ID, :DISB_DATE, :APPLICANT_PARTY, :BILL_REF_ID)")
+    @GetGeneratedKeys()
+    public String insert(@BindBean() FgTrdPreLoans entity);
+
+    @SqlQuery("UPDATE FG_TRD_PRE_LOANS SET ID = :ID, REFERENCE_ID = :REFERENCE_ID, TYPE_CODE = :TYPE_CODE, SUB_TYPE_CODE = :SUB_TYPE_CODE, ACTIVE_CODE = :ACTIVE_CODE, STAGE_CODE = :STAGE_CODE, STATUS_CODE = :STATUS_CODE, CREATED_ON = :CREATED_ON, CREATED_BY = :CREATED_BY, LAST_UPDATED_ON = :LAST_UPDATED_ON, LAST_UPDATED_BY = :LAST_UPDATED_BY, LAST_AUTHORISED_ON = :LAST_AUTHORISED_ON, LAST_AUTHORISED_BY = :LAST_AUTHORISED_BY, TEMPLATE = :TEMPLATE, IS_TEMPLATE = :IS_TEMPLATE, PRE_LOAN_REF_ID = :PRE_LOAN_REF_ID, LOAN_REF_ID = :LOAN_REF_ID, CUR_CODE = :CUR_CODE, PRINCIPAL_OUTSTANDING = :PRINCIPAL_OUTSTANDING, IN_LOAN_CUR = :IN_LOAN_CUR, DSP_AMT = :DSP_AMT, EQU_DSP_AMT = :EQU_DSP_AMT, PARENT_REF_ID = :PARENT_REF_ID, PARENT_VERSION_ID = :PARENT_VERSION_ID, IR_REFERENCE_ID = :IR_REFERENCE_ID, DISB_DATE = :DISB_DATE, APPLICANT_PARTY = :APPLICANT_PARTY, BILL_REF_ID = :BILL_REF_ID WHERE id = :id")
+    public int update(@BindBean() FgTrdPreLoans entity);
+
+    @SqlQuery("DELETE FROM FG_TRD_PRE_LOANS WHERE id = :id")
+    public int delete(@Bind("id") String id);
+}

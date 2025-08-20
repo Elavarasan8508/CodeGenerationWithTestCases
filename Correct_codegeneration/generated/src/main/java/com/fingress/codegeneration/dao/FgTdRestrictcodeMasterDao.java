@@ -1,0 +1,31 @@
+package com.bsit.codegeneration.dao;
+
+import org.jdbi.v3.sqlobject.statement.SqlQuery;
+import org.jdbi.v3.sqlobject.statement.SqlUpdate;
+import org.jdbi.v3.sqlobject.statement.GetGeneratedKeys;
+import org.jdbi.v3.sqlobject.customizer.Bind;
+import org.jdbi.v3.sqlobject.customizer.BindBean;
+import org.jdbi.v3.sqlobject.config.RegisterRowMapper;
+import com.bsit.codegeneration.record.FgTdRestrictcodeMaster;
+import com.bsit.codegeneration.mapper.FgTdRestrictcodeMasterMapper;
+import java.util.*;
+
+@RegisterRowMapper(FgTdRestrictcodeMasterMapper.class)
+public interface FgTdRestrictcodeMasterDao {
+
+    @SqlQuery("SELECT * FROM FG_TD_RESTRICTCODE_MASTER")
+    public List<FgTdRestrictcodeMaster> findAll();
+
+    @SqlQuery("SELECT * FROM FG_TD_RESTRICTCODE_MASTER WHERE id = :id")
+    public Optional<FgTdRestrictcodeMaster> findById(@Bind("id") String id);
+
+    @SqlUpdate("INSERT INTO FG_TD_RESTRICTCODE_MASTER(ID, REFERENCE_ID, TYPE_CODE, SUB_TYPE_CODE, ACTIVE_CODE, STAGE_CODE, STATUS_CODE, PROCESS_ID, CREATED_ON, CREATED_BY, LAST_UPDATED_ON, LAST_UPDATED_BY, LAST_AUTHORISED_ON, LAST_AUTHORISED_BY, TEMPLATE, APPLICANT_PARTY, FULFILLMENT_PARTY, IS_TEMPLATE, SCHEME_CODE, SCHEME_DESCRIPTION, TYPE, USER_ID, TASK_REASON, VERSION_ID, IS_MASTER_VERSION, SCHEME_TYPE, PARENT_REF_ID, PARENT_VERSION_ID, ORIGIN) VALUES (:ID, :REFERENCE_ID, :TYPE_CODE, :SUB_TYPE_CODE, :ACTIVE_CODE, :STAGE_CODE, :STATUS_CODE, :PROCESS_ID, :CREATED_ON, :CREATED_BY, :LAST_UPDATED_ON, :LAST_UPDATED_BY, :LAST_AUTHORISED_ON, :LAST_AUTHORISED_BY, :TEMPLATE, :APPLICANT_PARTY, :FULFILLMENT_PARTY, :IS_TEMPLATE, :SCHEME_CODE, :SCHEME_DESCRIPTION, :TYPE, :USER_ID, :TASK_REASON, :VERSION_ID, :IS_MASTER_VERSION, :SCHEME_TYPE, :PARENT_REF_ID, :PARENT_VERSION_ID, :ORIGIN)")
+    @GetGeneratedKeys()
+    public String insert(@BindBean() FgTdRestrictcodeMaster entity);
+
+    @SqlQuery("UPDATE FG_TD_RESTRICTCODE_MASTER SET ID = :ID, REFERENCE_ID = :REFERENCE_ID, TYPE_CODE = :TYPE_CODE, SUB_TYPE_CODE = :SUB_TYPE_CODE, ACTIVE_CODE = :ACTIVE_CODE, STAGE_CODE = :STAGE_CODE, STATUS_CODE = :STATUS_CODE, PROCESS_ID = :PROCESS_ID, CREATED_ON = :CREATED_ON, CREATED_BY = :CREATED_BY, LAST_UPDATED_ON = :LAST_UPDATED_ON, LAST_UPDATED_BY = :LAST_UPDATED_BY, LAST_AUTHORISED_ON = :LAST_AUTHORISED_ON, LAST_AUTHORISED_BY = :LAST_AUTHORISED_BY, TEMPLATE = :TEMPLATE, APPLICANT_PARTY = :APPLICANT_PARTY, FULFILLMENT_PARTY = :FULFILLMENT_PARTY, IS_TEMPLATE = :IS_TEMPLATE, SCHEME_CODE = :SCHEME_CODE, SCHEME_DESCRIPTION = :SCHEME_DESCRIPTION, TYPE = :TYPE, USER_ID = :USER_ID, TASK_REASON = :TASK_REASON, VERSION_ID = :VERSION_ID, IS_MASTER_VERSION = :IS_MASTER_VERSION, SCHEME_TYPE = :SCHEME_TYPE, PARENT_REF_ID = :PARENT_REF_ID, PARENT_VERSION_ID = :PARENT_VERSION_ID, ORIGIN = :ORIGIN WHERE id = :id")
+    public int update(@BindBean() FgTdRestrictcodeMaster entity);
+
+    @SqlQuery("DELETE FROM FG_TD_RESTRICTCODE_MASTER WHERE id = :id")
+    public int delete(@Bind("id") String id);
+}
