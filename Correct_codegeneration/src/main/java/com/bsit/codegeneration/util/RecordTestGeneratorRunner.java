@@ -2,227 +2,138 @@ package com.bsit.codegeneration.util;
 
 import com.bsit.codegeneration.model.*;
 import com.bsit.codegeneration.parser.RecordTestGenerator;
-import com.bsit.codegeneration.util.Relationship;
+import org.yaml.snakeyaml.Yaml;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.sql.*;
 import java.util.*;
 
 public class RecordTestGeneratorRunner {
 
+    private static final Logger logger = LoggerFactory.getLogger(RecordTestGeneratorRunner.class);
+    private static DatabaseConfig dbConfig;
+    private static TargetConfig targetConfig;
+    private static RecordConfig recordConfig;
+    private static final String DEFAULT_SCHEMA = "public";
+
     public static void main(String[] args) throws Exception {
-        String url = "jdbc:postgresql://localhost:5432/postgres";
-        String username = "postgres";
-        String password = "root";
+        loadConfigurationFromYaml();
 
         System.out.println("Starting record test generation...");
+        System.out.println("Connecting to: " + dbConfig.getUrl());
 
-        try (Connection conn = DriverManager.getConnection(url, username, password)) {
+        try (Connection conn = DriverManager.getConnection(
+                dbConfig.getUrl(), dbConfig.getUser(), dbConfig.getPassword())) {
+
             System.out.println("Database connected successfully!");
 
-            // Auto-discover all tables
-            List<String> allTables = discoverAllTables(conn);
+            List<String> allTables = DatabaseUtils.discoverAllTables(conn, dbConfig.getSchema());
             System.out.println("Discovered " + allTables.size() + " tables: " + allTables);
 
-            int successCount = 0, failCount = 0;
-
-            for (String tableName : allTables) {
-                System.out.println("\n=== Processing table: " + tableName + " ===");
-                ResultSet columns = null;
-                try {
-                    String schema = "public";
-                    columns = conn.getMetaData().getColumns(null, schema, tableName, null);
-
-                    if (!hasColumns(columns)) {
-                        System.err.println("  No columns found for table: " + tableName);
-                        failCount++;
-                        continue;
-                    }
-
-                    if (columns != null) columns.close();
-                    columns = conn.getMetaData().getColumns(null, schema, tableName, null);
-
-                    DatabaseConfig dbConfig = createDatabaseConfig();
-                    TargetConfig targetConfig = createTargetConfig();
-                    RecordConfig recordConfig = createRecordConfig();
-
-                    // DISCOVER relationships for this table
-                    List<Relationship> forwardRels = discoverImportedKeys(conn, schema, tableName);
-                    List<Relationship> reverseRels = discoverExportedKeys(conn, schema, tableName);
-
-                    // Detect and add many-to-many relationships
-                    for (Relationship rev : new ArrayList<>(reverseRels)) {
-                        String joinTable = rev.getRelatedTable();
-                        if (isJoinTable(conn, schema, joinTable)) {
-                            String targetTable = getOtherTarget(conn, schema, joinTable, tableName);
-                            if (targetTable != null) {
-                                // Add many-to-many relationship
-                                Relationship mmRel = new Relationship(
-                                        targetTable,
-                                        null,
-                                        null,
-                                        true,
-                                        Relationship.Type.MANY_TO_MANY,
-                                        joinTable  // assuming the constructor supports this
-                                );
-                                reverseRels.add(mmRel);
-                            }
-                        }
-                    }
-
-                    // Debug
-                    System.out.println("  forward relationships: " + forwardRels.size());
-                    System.out.println("  reverse relationships: " + reverseRels.size());
-
-                    // Generate record tests
-                    RecordTestGenerator.generateRecordTest(
-                            tableName,
-                            columns,
-                            dbConfig,
-                            targetConfig,
-                            recordConfig,
-                            forwardRels,
-                            reverseRels
-                    );
-
-                    successCount++;
-                    System.out.println("✓ Successfully generated record test for: " + tableName);
-
-                } catch (Exception e) {
-                    System.err.println("✗ Failed to generate record test for " + tableName + ": " + e.getMessage());
-                    e.printStackTrace();
-                    failCount++;
-                } finally {
-                    if (columns != null) try { columns.close(); } catch (SQLException ignore) {}
-                }
-            }
-
-            System.out.println("\n=== RECORD TEST GENERATION SUMMARY ===");
-            System.out.println("Total tables discovered: " + allTables.size());
-            System.out.println("Successfully generated: " + successCount);
-            System.out.println("Failed: " + failCount);
+            GenerationResult result = processAllTables(conn, allTables);
+            printSummary(allTables.size(), result.successCount, result.failCount);
 
         } catch (SQLException e) {
-            System.err.println("Database connection failed: " + e.getMessage());
-            throw e;
+            handleDatabaseConnectionError(e);
         }
 
         System.out.println("Record test generation completed!");
     }
 
-    private static boolean isJoinTable(Connection conn, String schema, String tableName) throws SQLException {
-        DatabaseMetaData meta = conn.getMetaData();
+    private static GenerationResult processAllTables(Connection conn, List<String> allTables) {
+        int successCount = 0, failCount = 0;
 
-        // Count columns
-        try (ResultSet columns = meta.getColumns(null, schema, tableName, null)) {
-            int columnCount = 0;
-            while (columns.next()) {
-                columnCount++;
-            }
+        for (String tableName : allTables) {
+            System.out.println("\n=== Processing table: " + tableName + " ===");
 
-            // Get imported keys (FKs)
-            try (ResultSet fks = meta.getImportedKeys(null, schema, tableName)) {
-                Set<String> fkTargets = new HashSet<>();
-                while (fks.next()) {
-                    String pkTable = fks.getString("PKTABLE_NAME");
-                    fkTargets.add(pkTable);
+            try {
+                if (processTable(conn, tableName)) {
+                    successCount++;
+                    System.out.println(" Successfully generated record test for: " + tableName);
+                } else {
+                    failCount++;
                 }
-
-                // Heuristic: exactly 2 FK targets and limited columns (e.g., FKs + optional last_update)
-                return fkTargets.size() == 2 && columnCount <= 4;
+            } catch (Exception e) {
+                handleTableProcessingError(tableName, e);
+                failCount++;
             }
         }
+
+        return new GenerationResult(successCount, failCount);
     }
 
-    private static String getOtherTarget(Connection conn, String schema, String joinTable, String currentTable) throws SQLException {
-        DatabaseMetaData meta = conn.getMetaData();
-        try (ResultSet fks = meta.getImportedKeys(null, schema, joinTable)) {
-            while (fks.next()) {
-                String pkTable = fks.getString("PKTABLE_NAME");
-                if (!pkTable.equals(currentTable)) {
-                    return pkTable;
-                }
+    private static boolean processTable(Connection conn, String tableName) throws SQLException {
+        String schema = dbConfig.getSchema();
+
+        try (ResultSet columns = DatabaseUtils.getTableColumns(conn, schema, tableName)) {
+            if (!DatabaseUtils.hasColumns(columns)) {
+                System.err.println("  No columns found for table: " + tableName);
+                return false;
             }
         }
-        return null;
-    }
 
-    private static List<Relationship> discoverImportedKeys(Connection conn, String schema, String tableName) throws SQLException {
-        List<Relationship> rels = new ArrayList<>();
-        DatabaseMetaData meta = conn.getMetaData();
-        try (ResultSet fk = meta.getImportedKeys(null, schema, tableName)) {
-            while (fk.next()) {
-                String pkTable = fk.getString("PKTABLE_NAME");
-                String pkColumn = fk.getString("PKCOLUMN_NAME");
-                String fkColumn = fk.getString("FKCOLUMN_NAME");
-                Relationship r = new Relationship(
-                        pkTable,
-                        pkColumn,
-                        fkColumn,
-                        false,
-                        Relationship.Type.MANY_TO_ONE,
-                        null
+        // Re-open columns ResultSet for generator
+        try (ResultSet columns = DatabaseUtils.getTableColumns(conn, schema, tableName)) {
+            List<Relationship> forwardRels = DatabaseUtils.discoverRelationships(conn, schema, tableName, false);
+            List<Relationship> reverseRels = DatabaseUtils.discoverRelationships(conn, schema, tableName, true);
+
+            // Detect many-to-many relationships
+            DatabaseUtils.detectManyToMany(conn, schema, tableName, reverseRels);
+
+            System.out.println("  forward relationships: " + forwardRels.size());
+            System.out.println("  reverse relationships: " + reverseRels.size());
+
+            try {
+                RecordTestGenerator.generateRecordTest(
+                        tableName,
+                        columns,
+                        dbConfig,
+                        targetConfig,
+                        recordConfig,
+                        forwardRels,
+                        reverseRels
                 );
-                rels.add(r);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
             }
+
+            return true;
         }
-        return rels;
     }
 
-    private static List<Relationship> discoverExportedKeys(Connection conn, String schema, String tableName) throws SQLException {
-        List<Relationship> rels = new ArrayList<>();
-        DatabaseMetaData meta = conn.getMetaData();
-        try (ResultSet fk = meta.getExportedKeys(null, schema, tableName)) {
-            while (fk.next()) {
-                String fkTable = fk.getString("FKTABLE_NAME");
-                String pkColumn = fk.getString("PKCOLUMN_NAME");
-                String fkColumn = fk.getString("FKCOLUMN_NAME");
-                Relationship r = new Relationship(
-                        fkTable,
-                        pkColumn,
-                        fkColumn,
-                        true,
-                        Relationship.Type.ONE_TO_MANY,
-                        null
-                );
-                rels.add(r);
+    private static void loadConfigurationFromYaml() throws Exception {
+        Yaml yaml = new Yaml(new CustomGeneratorConstructor());
+
+        try (InputStream input = Files.newInputStream(Paths.get("src/main/resources/generator.yml"))) {
+            GeneratorConfig config = yaml.loadAs(input, GeneratorConfig.class);
+            GeneratorSettings generator = config.getGenerator();
+
+            dbConfig = generator.getDatabase();
+            recordConfig = generator.getRecord();
+            targetConfig = createTargetConfig();
+
+            if (dbConfig.getUrl() == null || dbConfig.getUser() == null) {
+                throw new RuntimeException("Database URL and user are required in YAML configuration");
             }
-        }
-        return rels;
-    }
 
-    private static List<String> discoverAllTables(Connection conn) throws SQLException {
-        List<String> tableNames = new ArrayList<>();
-        DatabaseMetaData metaData = conn.getMetaData();
-        String[] types = {"TABLE"};
-        try (ResultSet tables = metaData.getTables(null, "public", "%", types)) {
-            while (tables.next()) {
-                String tableName = tables.getString("TABLE_NAME");
-                if (!isSystemTable(tableName)) tableNames.add(tableName);
+            if (dbConfig.getSchema() == null) {
+                dbConfig.setSchema(DEFAULT_SCHEMA);
             }
+
+            System.out.println("Configuration loaded from YAML successfully");
+            System.out.println("Database: " + dbConfig.getUrl());
+            System.out.println("Schema: " + dbConfig.getSchema());
+            System.out.println("Output Directory: " + targetConfig.getOutputDirectory());
+
+        } catch (Exception e) {
+            System.err.println("Failed to load configuration from YAML: " + e.getMessage());
+            throw new RuntimeException("YAML configuration loading failed", e);
         }
-        Collections.sort(tableNames);
-        return tableNames;
-    }
-
-    private static boolean hasColumns(ResultSet columns) throws SQLException {
-        boolean has = columns.next();
-        try { columns.beforeFirst(); } catch (SQLException ignored) {}
-        return has;
-    }
-
-    private static boolean isSystemTable(String tableName) {
-        String lower = tableName.toLowerCase();
-        return lower.startsWith("pg_") || lower.startsWith("information_schema") ||
-                lower.startsWith("sql_") || lower.equals("dual");
-    }
-
-    private static DatabaseConfig createDatabaseConfig() {
-        DatabaseConfig config = new DatabaseConfig();
-        NamingStrategyConfig naming = new NamingStrategyConfig();
-        naming.setStripPrefixes(Arrays.asList("tbl_", "t_"));
-        naming.setUppercaseAcronyms(Arrays.asList("ID", "URL", "API"));
-        config.setNamingStrategy(naming);
-        return config;
     }
 
     private static TargetConfig createTargetConfig() {
@@ -232,16 +143,32 @@ public class RecordTestGeneratorRunner {
         return config;
     }
 
-    private static RecordConfig createRecordConfig() {
-        RecordConfig config = new RecordConfig();
-        config.setBuilderPattern(true);
-        config.setUseJavaTime(true);
-        config.setPackageName("record"); // Records go in 'record' package
+    // Helper methods to reduce duplication
+    private static void handleDatabaseConnectionError(SQLException e) throws SQLException {
+        System.err.println("Database connection failed: " + e.getMessage());
+        throw e;
+    }
 
-        // Enable relationships for records
-        config.setIncludeRelationships(true);
-        config.setIncludeReverseRelationships(true);
+    private static void handleTableProcessingError(String tableName, Exception e) {
+        logger.error("Failed to generate record test for " + tableName, e);
+        System.err.println("An internal error occurred. Please contact support.");
+    }
 
-        return config;
+    private static void printSummary(int totalTables, int successCount, int failCount) {
+        System.out.println("\n=== RECORD TEST GENERATION SUMMARY ===");
+        System.out.println("Total tables discovered: " + totalTables);
+        System.out.println("Successfully generated: " + successCount);
+        System.out.println("Failed: " + failCount);
+    }
+
+    // Helper class to encapsulate generation results
+    private static class GenerationResult {
+        final int successCount;
+        final int failCount;
+
+        GenerationResult(int successCount, int failCount) {
+            this.successCount = successCount;
+            this.failCount = failCount;
+        }
     }
 }

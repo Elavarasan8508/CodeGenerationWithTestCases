@@ -1,22 +1,12 @@
 package com.bsit.codegeneration.test.record;
 
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
+import static org.junit.jupiter.api.Assertions.*;
+import com.bsit.codegeneration.record.*;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
-import com.bsit.codegeneration.record.Actor;
-import com.bsit.codegeneration.record.Category;
-import com.bsit.codegeneration.record.Film;
-import com.bsit.codegeneration.record.FilmActor;
-import com.bsit.codegeneration.record.FilmCategory;
-import com.bsit.codegeneration.record.Inventory;
-import com.bsit.codegeneration.record.Language;
 
 public class FilmTest {
 
@@ -62,7 +52,7 @@ public class FilmTest {
     @Test()
     @DisplayName("Should create record with all parameters")
     public void testConstructor() {
-        Film record = new Film(filmid, title, description, releaseyear, languageid, originallanguageid, rentalduration, rentalrate, length, replacementcost, rating, specialfeatures, lastupdate, language, filmactors, filmcategorys, inventorys, categorys, actors);
+        Film record = new Film(filmid, title, description, releaseyear, languageid, originallanguageid, rentalduration, rentalrate, length, replacementcost, rating, specialfeatures, lastupdate, language, filmactors, filmcategorys, inventorys, categorys,actors);
         assertNotNull(record);
         assertEquals(filmid, record.filmID());
         assertEquals(title, record.title());
@@ -83,7 +73,6 @@ public class FilmTest {
         assertEquals(inventorys, record.inventorys());
         assertEquals(actors, record.actors());
         assertEquals(categorys, record.categorys());
-        
     }
 
     @Test()
@@ -115,8 +104,8 @@ public class FilmTest {
     @Test()
     @DisplayName("Should implement equals and hashCode correctly")
     public void testEqualsAndHashCode() {
-        Film record1 = new Film(filmid, title, description, releaseyear, languageid, originallanguageid, rentalduration, rentalrate, length, replacementcost, rating, specialfeatures, lastupdate, language, filmactors, filmcategorys, inventorys,categorys, actors);
-        Film record2 = new Film(filmid, title, description, releaseyear, languageid, originallanguageid, rentalduration, rentalrate, length, replacementcost, rating, specialfeatures, lastupdate, language, filmactors, filmcategorys, inventorys, categorys, actors);
+        Film record1 = new Film(filmid, title, description, releaseyear, languageid, originallanguageid, rentalduration, rentalrate, length, replacementcost, rating, specialfeatures, lastupdate, language, filmactors, filmcategorys, inventorys, categorys,actors);
+        Film record2 = new Film(filmid, title, description, releaseyear, languageid, originallanguageid, rentalduration, rentalrate, length, replacementcost, rating, specialfeatures, lastupdate, language, filmactors, filmcategorys, inventorys, categorys,actors);
         assertEquals(record1, record2);
         assertEquals(record1.hashCode(), record2.hashCode());
     }
@@ -124,7 +113,7 @@ public class FilmTest {
     @Test()
     @DisplayName("Should have meaningful toString implementation")
     public void testToString() {
-        Film record = new Film(filmid, title, description, releaseyear, languageid, originallanguageid, rentalduration, rentalrate, length, replacementcost, rating, specialfeatures, lastupdate, language, filmactors, filmcategorys, inventorys, categorys, actors);
+        Film record = new Film(filmid, title, description, releaseyear, languageid, originallanguageid, rentalduration, rentalrate, length, replacementcost, rating, specialfeatures, lastupdate, language, filmactors, filmcategorys, inventorys,  categorys,actors);
         String result = record.toString();
         assertNotNull(result);
         assertTrue(result.contains("Film"));

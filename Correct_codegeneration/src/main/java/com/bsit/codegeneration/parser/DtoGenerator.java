@@ -2,6 +2,7 @@ package com.bsit.codegeneration.parser;
 
 import com.bsit.codegeneration.model.*;
 import com.bsit.codegeneration.util.Relationship;
+import com.bsit.codegeneration.util.StringUtils;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Modifier;
 import com.github.javaparser.ast.body.*;
@@ -17,6 +18,8 @@ import java.util.*;
 
 public class DtoGenerator {
 
+    public static final String STRING_TYPE = "String";
+
     // Public entry point to generate full DTO class
     public static void generateDto(
             String tableName,
@@ -29,8 +32,8 @@ public class DtoGenerator {
             throws SQLException, IOException {
 
         NamingStrategyConfig naming = dbConfig.getNamingStrategy();
-        String rawClassName = stripPrefix(tableName, naming.getStripPrefixes());
-        String className = toCamelCase(rawClassName, naming.getUppercaseAcronyms(), true) + "DTO";
+        String rawClassName = StringUtils.stripPrefix(tableName, naming.getStripPrefixes());
+        String className = StringUtils.toCamelCase(rawClassName, naming.getUppercaseAcronyms(), true) + "DTO";
 
         CompilationUnit cu = new CompilationUnit();
         String packageName = target.getBasePackage() + ".dto";
@@ -78,11 +81,11 @@ public class DtoGenerator {
         // Forward relationships
         if (dtoConfig.isIncludeRelationships()) {
             for (Relationship rel : relationships) {
-                String relatedClass = toCamelCase(stripPrefix(rel.getRelatedTable(), naming.getStripPrefixes()), naming.getUppercaseAcronyms(), true) + "DTO";
-                String fkField = toCamelCase(rel.getFkColumn(), naming.getUppercaseAcronyms(), false);
+                String relatedClass = StringUtils.toCamelCase(StringUtils.stripPrefix(rel.getRelatedTable(), naming.getStripPrefixes()), naming.getUppercaseAcronyms(), true) + "DTO";
+                String fkField = StringUtils.toCamelCase(rel.getFkColumn(), naming.getUppercaseAcronyms(), false);
                 String relationField = fkField.toLowerCase().endsWith("id") ? fkField.substring(0, fkField.length() - 2) : fkField;
                 if (relationField.isEmpty()) {
-                    relationField = toCamelCase(rel.getRelatedTable(), naming.getUppercaseAcronyms(), false);
+                    relationField = StringUtils.toCamelCase(rel.getRelatedTable(), naming.getUppercaseAcronyms(), false);
                 }
                 if (addedFields.add(relationField)) {
                     fieldTypes.put(relationField, relatedClass);
@@ -95,10 +98,10 @@ public class DtoGenerator {
         columns.beforeFirst();
         while (columns.next()) {
             String colName = columns.getString("COLUMN_NAME");
-            String fieldName = toCamelCase(colName, naming.getUppercaseAcronyms(), false);
+            String fieldName = StringUtils.toCamelCase(colName, naming.getUppercaseAcronyms(), false);
             String javaType = mapDbTypeToJava(columns.getString("TYPE_NAME"), colName);
 
-            boolean isPk = colName.equalsIgnoreCase("id") || colName.toLowerCase().endsWith("_id");
+            boolean isPk = (colName != null && (colName.equalsIgnoreCase("id") || colName.toLowerCase().endsWith("_id")));
             if (dtoConfig.isRemoveForeignKeyIdFields() && fkFieldNames.contains(fieldName) && !isPk) {
                 continue;
             }
@@ -112,8 +115,8 @@ public class DtoGenerator {
         // Reverse relationships
         if (dtoConfig.isIncludeReverseRelationships()) {
             for (Relationship rel : reverseRelationships) {
-                String relatedClass = toCamelCase(stripPrefix(rel.getRelatedTable(), naming.getStripPrefixes()), naming.getUppercaseAcronyms(), true) + "DTO";
-                String fieldName = toCamelCase(rel.getRelatedTable(), naming.getUppercaseAcronyms(), false) + "List";
+                String relatedClass = StringUtils.toCamelCase(StringUtils.stripPrefix(rel.getRelatedTable(), naming.getStripPrefixes()), naming.getUppercaseAcronyms(), true) + "DTO";
+                String fieldName = StringUtils.toCamelCase(rel.getRelatedTable(), naming.getUppercaseAcronyms(), false) + "List";
                 if (addedFields.add(fieldName)) {
                     fieldTypes.put(fieldName, "List<" + relatedClass + ">");
                 }
@@ -148,13 +151,26 @@ public class DtoGenerator {
                 relatedTableName = "address";
             }
             // derive class name from the (possibly adjusted) table name
-            String relatedClass = toCamelCase(stripPrefix(relatedTableName, naming.getStripPrefixes()), naming.getUppercaseAcronyms(), true) + "DTO";
+            String relatedClass = StringUtils.toCamelCase(StringUtils.stripPrefix(relatedTableName, naming.getStripPrefixes()), naming.getUppercaseAcronyms(), true) + "DTO";
 
-            String fkField = toCamelCase(rel.getFkColumn(), naming.getUppercaseAcronyms(), false);
-            String relationField = fkField.toLowerCase().endsWith("id") ? fkField.substring(0, fkField.length() - 2) : fkField;
-            if (relationField.isEmpty()) {
-                relationField = toCamelCase(rel.getRelatedTable(), naming.getUppercaseAcronyms(), false);
+            String fkField = StringUtils.toCamelCase(rel.getFkColumn(), naming.getUppercaseAcronyms(), false);
+
+            // Safely handle null fkField
+            String relationField;
+            if (fkField != null && fkField.toLowerCase().endsWith("id")) {
+                relationField = fkField.substring(0, fkField.length() - 2);
+            } else {
+                relationField = (fkField != null ? fkField : "");
             }
+
+            // Handle null/empty safely
+            if (relationField == null || relationField.isEmpty()) {
+                String relatedTable = rel.getRelatedTable();
+                relationField = (relatedTable != null)
+                        ? StringUtils.toCamelCase(relatedTable, naming.getUppercaseAcronyms(), false)
+                        : "";
+            }
+
             // avoid adding a relationship field when a column with same name already exists as a non-DTO
             if (addedFields.contains(relationField)) {
                 String existingType = fieldTypes.get(relationField);
@@ -174,7 +190,6 @@ public class DtoGenerator {
         }
     }
 
-
     // Table columns inclusion
     private static void processTableColumns(
             ResultSet columns,
@@ -188,10 +203,10 @@ public class DtoGenerator {
 
         while (columns.next()) {
             String colName = columns.getString("COLUMN_NAME");
-            String fieldName = toCamelCase(colName, naming.getUppercaseAcronyms(), false);
+            String fieldName = StringUtils.toCamelCase(colName, naming.getUppercaseAcronyms(), false);
             String javaType = mapDbTypeToJava(columns.getString("TYPE_NAME"), colName);
 
-            boolean isPk = colName.equalsIgnoreCase("id") || colName.toLowerCase().endsWith("_id");
+            boolean isPk = (colName != null && (colName.equalsIgnoreCase("id") || colName.toLowerCase().endsWith("_id")));
             if (dtoConfig.isRemoveForeignKeyIdFields() && fkFieldNames.contains(fieldName) && !isPk) {
                 continue;
             }
@@ -230,8 +245,6 @@ public class DtoGenerator {
         }
     }
 
-
-
     // Reverse relationships (lists)
     private static void processReverseRelationships(
             DtoConfig dtoConfig,
@@ -245,8 +258,8 @@ public class DtoGenerator {
 
         if (!dtoConfig.isIncludeReverseRelationships()) return;
         for (Relationship rel : revRels) {
-            String relatedClass = toCamelCase(stripPrefix(rel.getRelatedTable(), naming.getStripPrefixes()), naming.getUppercaseAcronyms(), true) + "DTO";
-            String fieldName = toCamelCase(rel.getRelatedTable(), naming.getUppercaseAcronyms(), false) + "List";
+            String relatedClass = StringUtils.toCamelCase(StringUtils.stripPrefix(rel.getRelatedTable(), naming.getStripPrefixes()), naming.getUppercaseAcronyms(), true) + "DTO";
+            String fieldName = StringUtils.toCamelCase(rel.getRelatedTable(), naming.getUppercaseAcronyms(), false) + "List";
             if (addedFields.add(fieldName)) {
                 dtoClass.addField("List<" + relatedClass + ">", fieldName, Modifier.Keyword.PRIVATE);
                 cu.addImport("java.util.List");
@@ -273,9 +286,9 @@ public class DtoGenerator {
     // Getters and Setters
     private static void generateAccessors(ClassOrInterfaceDeclaration dtoClass, Map<String, String> fieldTypes) {
         fieldTypes.forEach((name, type) -> {
-            dtoClass.addMethod("get" + capitalize(name), Modifier.Keyword.PUBLIC).setType(type)
+            dtoClass.addMethod("get" + StringUtils.capitalize(name), Modifier.Keyword.PUBLIC).setType(type)
                     .setBody(new BlockStmt().addStatement("return " + name + ";"));
-            dtoClass.addMethod("set" + capitalize(name), Modifier.Keyword.PUBLIC).addParameter(type, name)
+            dtoClass.addMethod("set" + StringUtils.capitalize(name), Modifier.Keyword.PUBLIC).addParameter(type, name)
                     .setBody(new BlockStmt().addStatement("this." + name + " = " + name + ";"));
         });
     }
@@ -295,7 +308,7 @@ public class DtoGenerator {
             MethodDeclaration method = builder.addMethod(name, Modifier.Keyword.PUBLIC).setType("Builder")
                     .addParameter(type, name);
             BlockStmt body = new BlockStmt();
-            body.addStatement("instance.set" + capitalize(name) + "(" + name + ");");
+            body.addStatement("instance.set" + StringUtils.capitalize(name) + "(" + name + ");");
             body.addStatement("return this;");
             method.setBody(body);
         });
@@ -314,52 +327,19 @@ public class DtoGenerator {
         System.out.println("Generated DTO: " + outputPath);
     }
 
-    // Utility methods
-    private static String capitalize(String s) {
-        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
-    }
-
-    private static String stripPrefix(String name, List<String> prefixes) {
-        if (name == null || prefixes == null) return name;
-        for (String prefix : prefixes) {
-            if (name.startsWith(prefix)) return name.substring(prefix.length());
-        }
-        return name;
-    }
-
-    private static String toCamelCase(String name, List<String> acronyms, boolean capitalizeFirst) {
-        if (name == null || name.isEmpty()) return name;
-        boolean hasLeading = name.startsWith("_");
-        boolean hasTrailing = name.endsWith("_");
-        String clean = name;
-        if (hasLeading) clean = clean.substring(1);
-        if (hasTrailing) clean = clean.substring(0, clean.length() - 1);
-
-        String[] parts = clean.toLowerCase().split("_");
-        StringBuilder sb = new StringBuilder();
-        if (hasLeading) sb.append("_");
-
-        for (int i = 0; i < parts.length; i++) {
-            String p = parts[i];
-            if (p.isEmpty()) continue;
-            boolean isAcronym = acronyms.contains(p.toUpperCase());
-            if (isAcronym) {
-                sb.append(p.toUpperCase());
-            } else if (i == 0 && !capitalizeFirst) {
-                sb.append(p);
-            } else {
-                sb.append(Character.toUpperCase(p.charAt(0))).append(p.substring(1));
-            }
-        }
-        if (hasTrailing) sb.append("_");
-        return sb.toString();
-    }
-
     private static String mapDbTypeToJava(String dbType, String columnName) {
-        if (columnName.equalsIgnoreCase("id") || columnName.toLowerCase().endsWith("_id")) {
+        // Handle null columnName safely
+        if (columnName != null && (columnName.equalsIgnoreCase("id") || columnName.toLowerCase().endsWith("_id"))) {
             return "Integer";
         }
+
+        // Handle null dbType safely
+        if (dbType == null) {
+            return "String";
+        }
+
         dbType = dbType.toUpperCase();
+
         return switch (dbType) {
             case "VARCHAR", "CHAR", "TEXT", "CLOB" -> "String";
             case "INT", "INTEGER", "SMALLINT", "TINYINT" -> "Integer";

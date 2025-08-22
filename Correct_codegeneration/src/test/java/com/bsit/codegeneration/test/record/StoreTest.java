@@ -25,7 +25,8 @@ public class StoreTest {
     private static final List<Customer> customers = new ArrayList<>();
 
     private static final List<Inventory> inventorys = new ArrayList<>();
-    
+
+    private static final List<Film> films = new ArrayList<>();
 
     @Test()
     @DisplayName("Should create record with all parameters")
@@ -40,7 +41,6 @@ public class StoreTest {
         assertEquals(staff, record.staff());
         assertEquals(customers, record.customers());
         assertEquals(inventorys, record.inventorys());
-
     }
 
     @Test()

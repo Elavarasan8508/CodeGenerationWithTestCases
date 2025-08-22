@@ -2,6 +2,7 @@ package com.bsit.codegeneration.parser;
 
 import com.bsit.codegeneration.model.*;
 import com.bsit.codegeneration.util.Relationship;
+import com.bsit.codegeneration.util.StringUtils;
 import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ParseProblemException;
 import com.github.javaparser.ast.CompilationUnit;
@@ -34,8 +35,8 @@ public class DtoTestGenerator {
             throws SQLException, IOException {
 
         NamingStrategyConfig naming = dbConfig.getNamingStrategy();
-        String rawClassName = stripPrefix(tableName, naming.getStripPrefixes());
-        String dtoClassName = toCamelCase(rawClassName, naming.getUppercaseAcronyms(), true) + "DTO";
+        String rawClassName = StringUtils.stripPrefix(tableName, naming.getStripPrefixes());
+        String dtoClassName = StringUtils.toCamelCase(rawClassName, naming.getUppercaseAcronyms(), true) + "DTO";
         String testClassName = dtoClassName + "Test";
 
         CompilationUnit cu = new CompilationUnit();
@@ -86,7 +87,6 @@ public class DtoTestGenerator {
         if (info != null && !info.constructors.isEmpty()) {
             int ctorIndex = 1;
             for (ConstructorInfo ctor : info.constructors) {
-                // Skip no-argument constructors to avoid generating duplicate parameterized constructor tests
                 if (ctor.paramNames.isEmpty()) {
                     continue;
                 }
@@ -251,7 +251,7 @@ public class DtoTestGenerator {
                 new NodeList<>(new NameExpr("dto")))));
 
         for (String field : fieldTypes.keySet()) {
-            String getter = "get" + capitalize(field);
+            String getter = "get" + StringUtils.capitalize(field);
             body.addStatement(new ExpressionStmt(new MethodCallExpr(null, "assertNull",
                     new NodeList<>(new MethodCallExpr(new NameExpr("dto"), getter)))));
         }
@@ -276,17 +276,22 @@ public class DtoTestGenerator {
                         "dto",
                         new ObjectCreationExpr(null, new ClassOrInterfaceType(null, dtoClassName), new NodeList<>())))));
 
-        for (String field : fieldTypes.keySet()) {
-            String setter = "set" + capitalize(field);
-            String getter = "get" + capitalize(field);
-            String constant = field.toLowerCase();
+        if (fieldTypes != null && body != null) {
+            for (String field : fieldTypes.keySet()) {
+                if (field == null) continue;
+                String setter = "set" + StringUtils.capitalize(field);
+                String getter = "get" + StringUtils.capitalize(field);
+                String constant = field.toLowerCase();
 
-            body.addStatement(new ExpressionStmt(new MethodCallExpr(
-                    new NameExpr("dto"), setter, new NodeList<>(new NameExpr(constant)))));
-            body.addStatement(new ExpressionStmt(new MethodCallExpr(
-                    null, "assertEquals",
-                    new NodeList<>(new NameExpr(constant), new MethodCallExpr(new NameExpr("dto"), getter)))));
+                body.addStatement(new ExpressionStmt(new MethodCallExpr(
+                        new NameExpr("dto"), setter, new NodeList<>(new NameExpr(constant)))));
+
+                body.addStatement(new ExpressionStmt(new MethodCallExpr(
+                        null, "assertEquals",
+                        new NodeList<>(new NameExpr(constant), new MethodCallExpr(new NameExpr("dto"), getter)))));
+            }
         }
+
         m.setBody(body);
     }
 
@@ -340,17 +345,22 @@ public class DtoTestGenerator {
         body.addStatement(new ExpressionStmt(new MethodCallExpr(null, "assertNotNull",
                 new NodeList<>(new NameExpr("dto")))));
 
-        for (String field : fieldTypes.keySet()) {
-            String getter = "get" + capitalize(field);
-            if (fieldsSet.contains(field)) {
-                body.addStatement(new ExpressionStmt(new MethodCallExpr(
-                        null, "assertEquals",
-                        new NodeList<>(new NameExpr(field.toLowerCase()),
-                                new MethodCallExpr(new NameExpr("dto"), getter)))));
-            } else {
-                body.addStatement(new ExpressionStmt(new MethodCallExpr(
-                        null, "assertNull",
-                        new NodeList<>(new MethodCallExpr(new NameExpr("dto"), getter)))));
+        if (fieldTypes != null && fieldsSet != null && body != null) {
+            for (String field : fieldTypes.keySet()) {
+                if (field == null) continue;
+                String getter = "get" + StringUtils.capitalize(field);
+                String constant = field.toLowerCase();
+
+                if (fieldsSet.contains(field)) {
+                    body.addStatement(new ExpressionStmt(new MethodCallExpr(
+                            null, "assertEquals",
+                            new NodeList<>(new NameExpr(constant),
+                                    new MethodCallExpr(new NameExpr("dto"), getter)))));
+                } else {
+                    body.addStatement(new ExpressionStmt(new MethodCallExpr(
+                            null, "assertNull",
+                            new NodeList<>(new MethodCallExpr(new NameExpr("dto"), getter)))));
+                }
             }
         }
 
@@ -383,13 +393,16 @@ public class DtoTestGenerator {
                             new ObjectCreationExpr(null, new ClassOrInterfaceType(null, dtoClassName), args)))));
             body.addStatement(new ExpressionStmt(new MethodCallExpr(null, "assertNotNull",
                     new NodeList<>(new NameExpr("dto")))));
-
-            for (String field : fieldTypes.keySet()) {
-                String getter = "get" + capitalize(field);
-                body.addStatement(new ExpressionStmt(new MethodCallExpr(
-                        null, "assertEquals",
-                        new NodeList<>(new NameExpr(field.toLowerCase()),
-                                new MethodCallExpr(new NameExpr("dto"), getter)))));
+            if(fieldTypes != null && body != null) {
+                for (String field : fieldTypes.keySet()) {
+                    if(field == null) continue;
+                    String getter = "get" + StringUtils.capitalize(field);
+                    String constant = field.toLowerCase();
+                    body.addStatement(new ExpressionStmt(new MethodCallExpr(
+                            null, "assertEquals",
+                            new NodeList<>(new NameExpr(constant),
+                                    new MethodCallExpr(new NameExpr("dto"), getter)))));
+                }
             }
         }
 
@@ -428,16 +441,19 @@ public class DtoTestGenerator {
                         builderExpr))));
         body.addStatement(new ExpressionStmt(new MethodCallExpr(null, "assertNotNull",
                 new NodeList<>(new NameExpr("dto")))));
+        if (fieldTypes != null && body != null) {
+            for (String field : fieldTypes.keySet()) {
+                if(field == null) continue;
+                String getter = "get" + StringUtils.capitalize(field);
+                String constant = field.toLowerCase();
+                body.addStatement(new ExpressionStmt(new MethodCallExpr(
+                        null, "assertEquals",
+                        new NodeList<>(new NameExpr(constant),
+                                new MethodCallExpr(new NameExpr("dto"), getter)))));
+            }
 
-        for (String field : fieldTypes.keySet()) {
-            String getter = "get" + capitalize(field);
-            body.addStatement(new ExpressionStmt(new MethodCallExpr(
-                    null, "assertEquals",
-                    new NodeList<>(new NameExpr(field.toLowerCase()),
-                            new MethodCallExpr(new NameExpr("dto"), getter)))));
+            m.setBody(body);
         }
-
-        m.setBody(body);
     }
 
     private static void generateEqualsHashCodeTest(
@@ -463,17 +479,20 @@ public class DtoTestGenerator {
                         new ClassOrInterfaceType(null, dtoClassName),
                         "dto2",
                         new ObjectCreationExpr(null, new ClassOrInterfaceType(null, dtoClassName), new NodeList<>())))));
-
-        for (String field : fieldTypes.keySet()) {
-            String setter = "set" + capitalize(field);
-            body.addStatement(new ExpressionStmt(new MethodCallExpr(
-                    new NameExpr("dto1"),
-                    setter,
-                    new NodeList<>(new NameExpr(field.toLowerCase())))));
-            body.addStatement(new ExpressionStmt(new MethodCallExpr(
-                    new NameExpr("dto2"),
-                    setter,
-                    new NodeList<>(new NameExpr(field.toLowerCase())))));
+        if(fieldTypes != null && body != null) {
+            for (String field : fieldTypes.keySet()) {
+                if(field == null) continue;
+                String setter = "set" + StringUtils.capitalize(field);
+                String constant = field.toLowerCase();
+                body.addStatement(new ExpressionStmt(new MethodCallExpr(
+                        new NameExpr("dto1"),
+                        setter,
+                        new NodeList<>(new NameExpr(constant)))));
+                body.addStatement(new ExpressionStmt(new MethodCallExpr(
+                        new NameExpr("dto2"),
+                        setter,
+                        new NodeList<>(new NameExpr(field.toLowerCase())))));
+            }
         }
 
         body.addStatement(new ExpressionStmt(new MethodCallExpr(
@@ -530,19 +549,18 @@ public class DtoTestGenerator {
 
         // Forward relationships
         for (Relationship rel : relationships) {
-            String rawName = stripPrefix(rel.getRelatedTable(), naming.getStripPrefixes());
-            String relatedDto = toCamelCase(rawName, naming.getUppercaseAcronyms(), true) + "DTO";
-            String fk = toCamelCase(rel.getFkColumn(), naming.getUppercaseAcronyms(), false);
+            String rawName = StringUtils.stripPrefix(rel.getRelatedTable(), naming.getStripPrefixes());
+            String relatedDto = StringUtils.toCamelCase(rawName, naming.getUppercaseAcronyms(), true) + "DTO";
+            String fk = StringUtils.toCamelCase(rel.getFkColumn(), naming.getUppercaseAcronyms(), false);
             String fieldName = fk.toLowerCase().endsWith("id")
                     ? fk.substring(0, fk.length() - 2)
                     : fk;
             if (fieldName.isEmpty()) {
-                fieldName = toCamelCase(rel.getRelatedTable(), naming.getUppercaseAcronyms(), false);
+                fieldName = StringUtils.toCamelCase(rel.getRelatedTable(), naming.getUppercaseAcronyms(), false);
             }
-            String suffix = capitalize(fieldName);
+            String suffix = StringUtils.capitalize(fieldName);
             String testName = "test" + suffix + "Relationship";
 
-            // SKIP if already generated
             if (!testClass.getMethodsByName(testName).isEmpty()) {
                 continue;
             }
@@ -587,12 +605,11 @@ public class DtoTestGenerator {
 
         // Reverse relationships
         for (Relationship rel : reverseRelationships) {
-            String rawName = stripPrefix(rel.getRelatedTable(), naming.getStripPrefixes());
-            String relatedDto = toCamelCase(rawName, naming.getUppercaseAcronyms(), true) + "DTO";
-            String listField = toCamelCase(rel.getRelatedTable(), naming.getUppercaseAcronyms(), false) + "List";
-            String testName = "test" + capitalize(listField) + "Relationship";
+            String rawName = StringUtils.stripPrefix(rel.getRelatedTable(), naming.getStripPrefixes());
+            String relatedDto = StringUtils.toCamelCase(rawName, naming.getUppercaseAcronyms(), true) + "DTO";
+            String listField = StringUtils.toCamelCase(rel.getRelatedTable(), naming.getUppercaseAcronyms(), false) + "List";
+            String testName = "test" + StringUtils.capitalize(listField) + "Relationship";
 
-            // SKIP if already generated
             if (!testClass.getMethodsByName(testName).isEmpty()) {
                 continue;
             }
@@ -635,16 +652,16 @@ public class DtoTestGenerator {
 
             body.addStatement(new ExpressionStmt(new MethodCallExpr(
                     new NameExpr("dto"),
-                    "set" + capitalize(listField),
+                    "set" + StringUtils.capitalize(listField),
                     new NodeList<>(new NameExpr("relatedList")))));
 
             body.addStatement(new ExpressionStmt(new MethodCallExpr(
                     null, "assertNotNull",
-                    new NodeList<>(new MethodCallExpr(new NameExpr("dto"), "get" + capitalize(listField))))));
+                    new NodeList<>(new MethodCallExpr(new NameExpr("dto"), "get" + StringUtils.capitalize(listField))))));
             body.addStatement(new ExpressionStmt(new MethodCallExpr(
                     null, "assertEquals",
                     new NodeList<>(new NameExpr("relatedList"),
-                            new MethodCallExpr(new NameExpr("dto"), "get" + capitalize(listField))))));
+                            new MethodCallExpr(new NameExpr("dto"), "get" + StringUtils.capitalize(listField))))));
 
             m.setBody(body);
         }
@@ -753,55 +770,5 @@ public class DtoTestGenerator {
                 }
                 return "null";
         }
-    }
-
-    private static String capitalize(String s) {
-        if (s == null || s.isEmpty()) return s;
-        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
-    }
-
-    private static String stripPrefix(String name, List<String> prefixes) {
-        if (name == null || prefixes == null) return name;
-        for (String prefix : prefixes) {
-            if (name.startsWith(prefix)) {
-                return name.substring(prefix.length());
-            }
-        }
-        return name;
-    }
-
-    private static String toCamelCase(
-            String name,
-            List<String> acronyms,
-            boolean capitalizeFirst) {
-
-        if (name == null || name.isEmpty()) return name;
-
-        boolean leading = name.startsWith("_");
-        boolean trailing = name.endsWith("_");
-        String clean = name;
-        if (leading) clean = clean.substring(1);
-        if (trailing) clean = clean.substring(0, clean.length() - 1);
-
-        String[] parts = clean.toLowerCase().split("_");
-        StringBuilder sb = new StringBuilder();
-        if (leading) sb.append("_");
-
-        for (int i = 0; i < parts.length; i++) {
-            String p = parts[i];
-            if (p.isEmpty()) continue;
-            boolean isAcronym = acronyms != null && acronyms.contains(p.toUpperCase());
-            if (isAcronym) {
-                sb.append(p.toUpperCase());
-            } else if (i == 0 && !capitalizeFirst) {
-                sb.append(p);
-            } else {
-                sb.append(Character.toUpperCase(p.charAt(0)))
-                        .append(p.substring(1));
-            }
-        }
-
-        if (trailing) sb.append("_");
-        return sb.toString();
     }
 }

@@ -2,6 +2,7 @@ package com.bsit.codegeneration.parser;
 
 import com.bsit.codegeneration.model.*;
 import com.bsit.codegeneration.util.Relationship;
+import com.bsit.codegeneration.util.StringUtils;
 import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Modifier;
@@ -42,8 +43,8 @@ public class DaoGenerator {
             throws Exception {
 
         NamingStrategyConfig naming = dbConfig.getNamingStrategy();
-        String rawClassName = stripPrefix(tableName, naming.getStripPrefixes());
-        String className = toCamelCase(rawClassName, naming.getUppercaseAcronyms(), true);
+        String rawClassName = StringUtils.stripPrefix(tableName, naming.getStripPrefixes());
+        String className = StringUtils.toCamelCase(rawClassName, naming.getUppercaseAcronyms(), true);
         String recordClassName = className + "DTO";
         String daoClassName = className + "JdbcDao";
         String packageName = target.getBasePackage() + "." + target.getDaoPackage();
@@ -174,7 +175,7 @@ public class DaoGenerator {
             LinkedHashMap<String, String> orderedFields,
             NamingStrategyConfig naming) {
 
-        String pkCamel = toCamelCase(pkField, naming.getUppercaseAcronyms(), false);
+        String pkCamel = StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), false);
         MethodDeclaration m = daoClass.addMethod("findById", Modifier.Keyword.PUBLIC);
         m.setType(recordClassName);
         m.addParameter(idType, pkCamel);
@@ -253,7 +254,7 @@ public class DaoGenerator {
         }
         for (int i = 0; i < insertCols.size(); i++) {
             ColumnInfo c = insertCols.get(i);
-            String getter = "entity.get" + toCamelCase(c.name, naming.getUppercaseAcronyms(), true) + "()";
+            String getter = "entity.get" + StringUtils.toCamelCase(c.name, naming.getUppercaseAcronyms(), true) + "()";
             int idx = i + 1;
             if ("java.time.LocalDateTime".equals(c.javaType)) {
                 block.append("   ps.setTimestamp(").append(idx).append(", toTimestamp(").append(getter).append("));\n");
@@ -272,7 +273,7 @@ public class DaoGenerator {
             block.append("   }\n");
             block.append("   return null;\n");
         } else {
-            block.append("   return entity.get").append(toCamelCase(pkField, naming.getUppercaseAcronyms(), true)).append("();\n");
+            block.append("   return entity.get").append(StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), true)).append("();\n");
         }
         block.append("  }\n");
         block.append("}\n");
@@ -308,7 +309,7 @@ public class DaoGenerator {
 
         for (int i = 0; i < updateCols.size(); i++) {
             ColumnInfo c = updateCols.get(i);
-            String getter = "entity.get" + toCamelCase(c.name, naming.getUppercaseAcronyms(), true) + "()";
+            String getter = "entity.get" + StringUtils.toCamelCase(c.name, naming.getUppercaseAcronyms(), true) + "()";
             int idx = i + 1;
             if ("java.time.LocalDateTime".equals(c.javaType)) {
                 block.append("   ps.setTimestamp(").append(idx).append(", toTimestamp(").append(getter).append("));\n");
@@ -320,7 +321,7 @@ public class DaoGenerator {
         // set PK at the end
         block.append("   ps.").append(getPreparedStatementSetter(idType)).append("(")
                 .append(updateCols.size() + 1).append(", entity.get")
-                .append(toCamelCase(pkField, naming.getUppercaseAcronyms(), true)).append("());\n");
+                .append(StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), true)).append("());\n");
 
         block.append("   return ps.executeUpdate();\n");
         block.append("  }\n");
@@ -336,7 +337,7 @@ public class DaoGenerator {
             String idType,
             NamingStrategyConfig naming) {
 
-        String pkCamel = toCamelCase(pkField, naming.getUppercaseAcronyms(), false);
+        String pkCamel = StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), false);
         MethodDeclaration m = daoClass.addMethod("delete", Modifier.Keyword.PUBLIC);
         m.setType("int");
         m.addParameter(idType, pkCamel);
@@ -375,7 +376,7 @@ public class DaoGenerator {
         System.out.println("Generated DAO: " + outputPath);
     }
 
-    /* ---------- utility methods (copied from your original) ---------- */
+    /* ---------- utility methods ---------- */
 
     private static String toDbColumn(String fieldName) {
         StringBuilder result = new StringBuilder();
@@ -388,48 +389,6 @@ public class DaoGenerator {
                 result.append(c);
             }
         }
-        return result.toString();
-    }
-
-    private static String stripPrefix(String name, List<String> prefixes) {
-        if (name == null || prefixes == null) return name;
-        for (String prefix : prefixes) {
-            if (name.startsWith(prefix)) return name.substring(prefix.length());
-        }
-        return name;
-    }
-
-    private static String toCamelCase(String name, List<String> acronyms, boolean capitalizeFirst) {
-        if (name == null || name.isEmpty()) return name;
-
-        boolean hasLeadingUnderscore = name.startsWith("_");
-        boolean hasTrailingUnderscore = name.endsWith("_");
-        String cleanedName = name;
-        if (hasLeadingUnderscore) cleanedName = cleanedName.substring(1);
-        if (hasTrailingUnderscore) cleanedName = cleanedName.substring(0, cleanedName.length() - 1);
-
-        String[] parts = cleanedName.toLowerCase().split("_");
-        StringBuilder result = new StringBuilder();
-
-        if (hasLeadingUnderscore) result.append("_");
-
-        for (int i = 0; i < parts.length; i++) {
-            String part = parts[i];
-            if (part.isEmpty()) continue;
-
-            if (acronyms != null && acronyms.contains(part.toUpperCase())) {
-                result.append(part.toUpperCase());
-            } else if (i == 0 && !capitalizeFirst) {
-                result.append(part);
-            } else {
-                result.append(Character.toUpperCase(part.charAt(0)));
-                if (part.length() > 1) {
-                    result.append(part.substring(1));
-                }
-            }
-        }
-
-        if (hasTrailingUnderscore) result.append("_");
         return result.toString();
     }
 

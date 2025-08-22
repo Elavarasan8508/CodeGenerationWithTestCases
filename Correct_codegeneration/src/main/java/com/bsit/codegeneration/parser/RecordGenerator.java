@@ -2,6 +2,7 @@ package com.bsit.codegeneration.parser;
 
 import com.bsit.codegeneration.model.*;
 import com.bsit.codegeneration.util.Relationship;
+import com.bsit.codegeneration.util.StringUtils;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Modifier;
 import com.github.javaparser.ast.body.*;
@@ -20,14 +21,13 @@ public class RecordGenerator {
             throws SQLException, IOException {
 
         NamingStrategyConfig naming = dbConfig.getNamingStrategy();
-        String rawClassName = stripPrefix(tableName, naming.getStripPrefixes());
-        String className = toCamelCase(rawClassName, naming.getUppercaseAcronyms(), true);
+        String rawClassName = StringUtils.stripPrefix(tableName, naming.getStripPrefixes());
+        String className = StringUtils.toCamelCase(rawClassName, naming.getUppercaseAcronyms(), true);
 
         CompilationUnit cu = new CompilationUnit();
         String packageName = target.getBasePackage() + "." + recordConfig.getPackageName();
         cu.setPackageDeclaration(packageName);
 
-        // Add imports for List and related record types
         cu.addImport("java.util.List");
 
         RecordDeclaration record = new RecordDeclaration()
@@ -37,14 +37,14 @@ public class RecordGenerator {
 
         Map<String, String> fields = new LinkedHashMap<>();
         Set<String> seen = new HashSet<>();
-        Set<String> seenRelatedTables = new HashSet<>(); // Track related tables to avoid duplicates
+        Set<String> seenRelatedTables = new HashSet<>();
 
         // Add fields from table columns
         while (columns.next()) {
             String colName = columns.getString("COLUMN_NAME");
             if (!seen.add(colName)) continue;
 
-            String fieldName = toCamelCase(colName, naming.getUppercaseAcronyms(), false);
+            String fieldName = StringUtils.toCamelCase(colName, naming.getUppercaseAcronyms(), false);
             String dbType = columns.getString("TYPE_NAME");
             String javaType = mapDbTypeToJava(dbType, colName, recordConfig.isUseJavaTime());
 
@@ -63,8 +63,10 @@ public class RecordGenerator {
             if (seenRelatedTables.contains(relatedTable)) continue; // Skip if already processed
             seenRelatedTables.add(relatedTable);
 
-            String relatedClass = toCamelCase(stripPrefix(relatedTable, naming.getStripPrefixes()),
-                    naming.getUppercaseAcronyms(), true);
+            String relatedClass = StringUtils.toCamelCase(
+                    StringUtils.stripPrefix(relatedTable, naming.getStripPrefixes()),
+                    naming.getUppercaseAcronyms(), true
+            );
             cu.addImport(target.getBasePackage() + "." + recordConfig.getPackageName() + "." + relatedClass);
 
             String fieldName;
@@ -73,16 +75,15 @@ public class RecordGenerator {
 
             // Determine field name and type based on relationship type
             if (isList) {
-                fieldName = toCamelCase(relatedTable, naming.getUppercaseAcronyms(), false) + "s";
+                fieldName = StringUtils.toCamelCase(relatedTable, naming.getUppercaseAcronyms(), false) + "s";
                 fieldType = "List<" + relatedClass + ">";
             } else {
-                fieldName = toCamelCase(relatedTable, naming.getUppercaseAcronyms(), false);
+                fieldName = StringUtils.toCamelCase(relatedTable, naming.getUppercaseAcronyms(), false);
                 fieldType = relatedClass;
             }
 
             // Check for existing field with same name (e.g., singular vs plural conflict)
             if (fields.containsKey(fieldName)) {
-                // If field exists with different type, append suffix to avoid conflict
                 fieldName = isList ? fieldName : fieldName + "Ref";
             }
 
@@ -96,12 +97,9 @@ public class RecordGenerator {
                     .setPublic(true)
                     .setStatic(true);
 
-            // Add fields to builder
             for (Map.Entry<String, String> entry : fields.entrySet()) {
                 builder.addField(entry.getValue(), entry.getKey(), Modifier.Keyword.PRIVATE);
             }
-
-            // Add setter methods to builder
             for (Map.Entry<String, String> entry : fields.entrySet()) {
                 String fieldName = entry.getKey();
                 String fieldType = entry.getValue();
@@ -114,7 +112,6 @@ public class RecordGenerator {
                         .addStatement("return this;"));
             }
 
-            // Add build method
             String constructorParams = String.join(", ", fields.keySet());
             MethodDeclaration build = builder.addMethod("build", Modifier.Keyword.PUBLIC);
             build.setType(className);
@@ -131,45 +128,9 @@ public class RecordGenerator {
         System.out.println(" Generated Record with Builder: " + outputPath);
     }
 
-    private static String stripPrefix(String name, List<String> prefixes) {
-        for (String prefix : prefixes) {
-            if (name.startsWith(prefix)) return name.substring(prefix.length());
-        }
-        return name;
-    }
-
-    private static String toCamelCase(String name, List<String> acronyms, boolean capitalizeFirst) {
-        if (name == null || name.isEmpty()) return name;
-        int leadingUnderscores = 0;
-        int trailingUnderscores = 0;
-
-        while (leadingUnderscores < name.length() && name.charAt(leadingUnderscores) == '_') {
-            leadingUnderscores++;
-        }
-        while (trailingUnderscores < name.length() &&
-                name.charAt(name.length() - 1 - trailingUnderscores) == '_') {
-            trailingUnderscores++;
-        }
-
-        String trimmed = name.substring(leadingUnderscores, name.length() - trailingUnderscores);
-        String[] parts = trimmed.toLowerCase().split("_+");
-
-        StringBuilder result = new StringBuilder();
-
-        for (int i = 0; i < parts.length; i++) {
-            String part = parts[i];
-            if (part.isEmpty()) continue;
-
-            if (acronyms.contains(part.toUpperCase())) {
-                result.append(part.toUpperCase());
-            } else if (i == 0 && !capitalizeFirst) {
-                result.append(part);
-            } else {
-                result.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
-            }
-        }
-        return "_".repeat(leadingUnderscores) + result + "_".repeat(trailingUnderscores);
-    }
+    // Use a shared string utility class for the following methods
+    // private static String stripPrefix(...)
+    // private static String toCamelCase(...)
 
     private static boolean isIdField(String upperColumnName) {
         return upperColumnName.endsWith("_ID") || upperColumnName.equals("ID") || upperColumnName.endsWith("ID");
@@ -179,7 +140,6 @@ public class RecordGenerator {
         dbType = dbType.toUpperCase();
         String upperColumnName = columnName.toUpperCase();
 
-        // Debug print to see what column names we're getting
         System.out.println("Processing column: " + columnName + " (upper: " + upperColumnName + ") with type: " + dbType);
 
         return switch (dbType) {
