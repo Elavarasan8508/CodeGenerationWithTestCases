@@ -24,11 +24,15 @@ public class DaoGenerator {
         String name;
         String javaType;
         boolean isAutoIncrement;
+        boolean isForeignKey;
+        String referencedTable;
 
         ColumnInfo(String name, String javaType, boolean isAutoIncrement) {
             this.name = name;
             this.javaType = javaType;
             this.isAutoIncrement = isAutoIncrement;
+            this.isForeignKey = false;
+            this.referencedTable = null;
         }
     }
 
@@ -45,20 +49,25 @@ public class DaoGenerator {
         NamingStrategyConfig naming = dbConfig.getNamingStrategy();
         String rawClassName = StringUtils.stripPrefix(tableName, naming.getStripPrefixes());
         String className = StringUtils.toCamelCase(rawClassName, naming.getUppercaseAcronyms(), true);
-        String recordClassName = className + "DTO";
-        String daoClassName = className + "JdbcDao";
+        String modelClassName = className+"DTO";
+        String daoClassName = className + "Dao";
         String packageName = target.getBasePackage() + "." + target.getDaoPackage();
-
-        // Safely handle null database configuration values
-        String url = dbConfig.getUrl() != null ? dbConfig.getUrl() : "";
-        String username = dbConfig.getName() != null ? dbConfig.getName() : "";
-        String password = dbConfig.getPassword() != null ? dbConfig.getPassword() : "";
 
         // Collect column information
         List<ColumnInfo> columnsInfo = new ArrayList<>();
+        Map<String, String> foreignKeyMap = new HashMap<>();
         String pkField = null;
         String idType = null;
         boolean pkIsAuto = false;
+
+        // Map foreign keys from relationships
+        if (relationships != null) {
+            for (Relationship rel : relationships) {
+                if (rel.getType() == Relationship.Type.MANY_TO_ONE) {
+                    foreignKeyMap.put(rel.getFkColumn(), rel.getRelatedTable());
+                }
+            }
+        }
 
         while (columns.next()) {
             String colName = columns.getString("COLUMN_NAME");
@@ -76,13 +85,21 @@ public class DaoGenerator {
                 isAutoIncrement = true;
             }
 
-            columnsInfo.add(new ColumnInfo(colName, javaType, isAutoIncrement));
+            ColumnInfo colInfo = new ColumnInfo(colName, javaType, isAutoIncrement);
+
+            // Check if this column is a foreign key
+            if (foreignKeyMap.containsKey(colName)) {
+                colInfo.isForeignKey = true;
+                colInfo.referencedTable = foreignKeyMap.get(colName);
+            }
+
+            columnsInfo.add(colInfo);
 
             if (pkField == null && colName.equalsIgnoreCase("id")) {
                 pkField = colName;
                 idType = javaType;
                 pkIsAuto = isAutoIncrement;
-            } else if (pkField == null && colName.toLowerCase().endsWith("_id")) {
+            } else if (pkField == null && colName.toLowerCase().endsWith("_id") && !colInfo.isForeignKey) {
                 pkField = colName;
                 idType = javaType;
                 pkIsAuto = isAutoIncrement;
@@ -100,132 +117,105 @@ public class DaoGenerator {
             pkIsAuto = false;
         }
 
-        // Get DTO field types and order from DtoGenerator to ensure sync
-        LinkedHashMap<String, String> orderedFields = DtoGenerator.extractDtoFieldTypes(
-                columns, relationships, reverseRelationships, dtoConfig, dbConfig);
-
         // Build class using JavaParser
         CompilationUnit cu = new CompilationUnit();
         cu.setPackageDeclaration(packageName);
 
         // imports
         cu.addImport("java.sql.*");
-        cu.addImport("java.util.*");
-        cu.addImport("java.time.LocalDateTime");
-        cu.addImport(target.getBasePackage() + "." + target.getRecordPackage() + "." + recordClassName);
+        cu.addImport("java.util.ArrayList");
+        cu.addImport("java.util.List");
+        cu.addImport(target.getBasePackage() + "." + target.getRecordPackage() + ".*");
 
         // class
         ClassOrInterfaceDeclaration daoClass = cu.addClass(daoClassName, Modifier.Keyword.PUBLIC);
 
-        // constants with null-safe initialization
-        FieldDeclaration urlField = daoClass.addFieldWithInitializer("String", "DB_URL",
-                new StringLiteralExpr(url), Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
-        FieldDeclaration userField = daoClass.addFieldWithInitializer("String", "DB_USER",
-                new StringLiteralExpr(username), Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
-        FieldDeclaration passField = daoClass.addFieldWithInitializer("String", "DB_PASSWORD",
-                new StringLiteralExpr(password), Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
+        // Create SQL constant fields
+        createSqlConstants(daoClass, tableName, columnsInfo, pkField, pkIsAuto, relationships);
 
-        // connection field
-        daoClass.addField("Connection", "conn", Modifier.Keyword.PRIVATE);
-
-        // constructor
-        ConstructorDeclaration ctor = daoClass.addConstructor(Modifier.Keyword.PUBLIC);
-        ctor.addThrownException(new ClassOrInterfaceType(null, "SQLException"));
-        BlockStmt ctorBody = new BlockStmt();
-        ctorBody.addStatement("this.conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);");
-        ctor.setBody(ctorBody);
-
-        // close()
-        MethodDeclaration closeMethod = daoClass.addMethod("close", Modifier.Keyword.PUBLIC);
-        closeMethod.addThrownException(new ClassOrInterfaceType(null, "SQLException"));
-        StringBuilder closeBlock = new StringBuilder();
-        closeBlock.append("{\n");
-        closeBlock.append("  if (conn != null && !conn.isClosed()) {\n");
-        closeBlock.append("    conn.close();\n");
-        closeBlock.append("  }\n");
-        closeBlock.append("}\n");
-        BlockStmt closeBody = StaticJavaParser.parseBlock(closeBlock.toString());
-        closeMethod.setBody(closeBody);
-
-        // findById
-        createFindByIdMethod(daoClass, tableName, recordClassName, pkField, idType, orderedFields, naming);
-
-        // insert
-        createInsertMethod(daoClass, tableName, recordClassName, pkField, idType, columnsInfo, naming, pkIsAuto);
-
-        // update
-        createUpdateMethod(daoClass, tableName, recordClassName, pkField, idType, columnsInfo, naming);
-
-        // delete
+        // Create methods
+        createInsertMethod(daoClass, tableName, modelClassName, pkField, idType, columnsInfo, naming, pkIsAuto);
+        createFindByIdMethod(daoClass, tableName, modelClassName, pkField, idType, columnsInfo, naming);
+        createFindAllMethod(daoClass, tableName, modelClassName, columnsInfo, naming);
+        createUpdateMethod(daoClass, tableName, modelClassName, pkField, idType, columnsInfo, naming);
         createDeleteMethod(daoClass, tableName, pkField, idType, naming);
 
-        // helper methods
-        createHelperMethods(daoClass);
+        // Create relationship-based finder methods
+        createRelationshipMethods(daoClass, tableName, modelClassName, columnsInfo, relationships, naming);
+
+        // Create extract method
+        createExtractMethod(daoClass, modelClassName, columnsInfo, naming);
 
         // write file
         writeToFile(target, packageName, daoClassName, cu);
     }
 
-    private static void createFindByIdMethod(
+    private static void createSqlConstants(
             ClassOrInterfaceDeclaration daoClass,
             String tableName,
-            String recordClassName,
+            List<ColumnInfo> columnsInfo,
             String pkField,
-            String idType,
-            LinkedHashMap<String, String> orderedFields,
-            NamingStrategyConfig naming) {
+            boolean pkIsAuto,
+            List<Relationship> relationships) {
 
-        String pkCamel = StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), false);
-        MethodDeclaration m = daoClass.addMethod("findById", Modifier.Keyword.PUBLIC);
-        m.setType(recordClassName);
-        m.addParameter(idType, pkCamel);
-        m.addThrownException(new ClassOrInterfaceType(null, "SQLException"));
-
-        // Build body as a parseable block (keeps code readable)
-        StringBuilder block = new StringBuilder();
-        block.append("{\n");
-        block.append("  String sql = \"SELECT * FROM ").append(tableName).append(" WHERE ").append(pkField).append(" = ?\";\n");
-        block.append("  try (PreparedStatement ps = conn.prepareStatement(sql)) {\n");
-        block.append("   ps.").append(getPreparedStatementSetter(idType)).append("(1, ").append(pkCamel).append(");\n");
-        block.append("   try (ResultSet rs = ps.executeQuery()) {\n");
-        block.append("    if (rs.next()) {\n");
-        block.append("     return new ").append(recordClassName).append("(");
-
-        List<Map.Entry<String, String>> validFields = orderedFields.entrySet().stream()
-                .filter(entry -> !entry.getValue().startsWith("List<"))
+        // INSERT_SQL
+        List<ColumnInfo> insertCols = columnsInfo.stream()
+                .filter(c -> !(pkIsAuto && c.name.equals(pkField)))
                 .collect(Collectors.toList());
+        String insertColumns = insertCols.stream().map(c -> c.name).collect(Collectors.joining(", "));
+        String insertPlaceholders = insertCols.stream().map(c -> "?").collect(Collectors.joining(", "));
+        String insertSql = "INSERT INTO " + tableName + " (" + insertColumns + ") VALUES (" + insertPlaceholders + ")";
+        daoClass.addFieldWithInitializer("String", "INSERT_SQL",
+                new StringLiteralExpr(insertSql),
+                Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
 
-        for (int i = 0; i < validFields.size(); i++) {
-            Map.Entry<String, String> entry = validFields.get(i);
-            String field = entry.getKey();
-            String type = entry.getValue();
+        // SELECT_BY_ID_SQL
+        String selectByIdSql = "SELECT * FROM " + tableName + " WHERE " + pkField + " = ?";
+        daoClass.addFieldWithInitializer("String", "SELECT_BY_ID_SQL",
+                new StringLiteralExpr(selectByIdSql),
+                Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
 
-            if (type.endsWith("DTO")) {
-                block.append("null");
-            } else if ("java.time.LocalDateTime".equals(type)) {
-                block.append("toLocalDateTime(rs.getTimestamp(\"").append(toDbColumn(field)).append("\"))");
-            } else {
-                String columnName = field.equals(pkCamel) ? pkField : toDbColumn(field);
-                block.append("rs.").append(getResultSetGetter(type)).append("(\"").append(columnName).append("\")");
+        // SELECT_ALL_SQL
+        String selectAllSql = "SELECT * FROM " + tableName + " ORDER BY " + pkField;
+        daoClass.addFieldWithInitializer("String", "SELECT_ALL_SQL",
+                new StringLiteralExpr(selectAllSql),
+                Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
+
+        // CREATE FK SELECT METHODS
+        if (relationships != null) {
+            for (Relationship rel : relationships) {
+                if (rel.getType() == Relationship.Type.MANY_TO_ONE) {
+                    String fkColumn = rel.getFkColumn();
+                    String constantName = "SELECT_BY_" + fkColumn.toUpperCase() + "_SQL";
+                    String sql = "SELECT * FROM " + tableName + " WHERE " + fkColumn + " = ?";
+                    daoClass.addFieldWithInitializer("String", constantName,
+                            new StringLiteralExpr(sql),
+                            Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
+                }
             }
-            if (i < validFields.size() - 1) block.append(", ");
         }
 
-        block.append(");\n"); // close constructor call
-        block.append("    }\n");
-        block.append("    return null;\n");
-        block.append("   }\n");
-        block.append("  }\n");
-        block.append("}\n");
+        // UPDATE_SQL
+        List<ColumnInfo> updateCols = columnsInfo.stream()
+                .filter(c -> !c.name.equalsIgnoreCase(pkField))
+                .collect(Collectors.toList());
+        String setClause = updateCols.stream().map(c -> c.name + " = ?").collect(Collectors.joining(", "));
+        String updateSql = "UPDATE " + tableName + " SET " + setClause + " WHERE " + pkField + " = ?";
+        daoClass.addFieldWithInitializer("String", "UPDATE_SQL",
+                new StringLiteralExpr(updateSql),
+                Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
 
-        BlockStmt body = StaticJavaParser.parseBlock(block.toString());
-        m.setBody(body);
+        // DELETE_SQL
+        String deleteSql = "DELETE FROM " + tableName + " WHERE " + pkField + " = ?";
+        daoClass.addFieldWithInitializer("String", "DELETE_SQL",
+                new StringLiteralExpr(deleteSql),
+                Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
     }
 
     private static void createInsertMethod(
             ClassOrInterfaceDeclaration daoClass,
             String tableName,
-            String recordClassName,
+            String modelClassName,
             String pkField,
             String idType,
             List<ColumnInfo> columnsInfo,
@@ -233,99 +223,257 @@ public class DaoGenerator {
             boolean pkIsAuto) {
 
         MethodDeclaration m = daoClass.addMethod("insert", Modifier.Keyword.PUBLIC);
-        m.setType(idType);
-        m.addParameter(recordClassName, "entity");
+        m.setType("int");
+        m.addParameter("Connection", "conn");
+        m.addParameter(modelClassName, StringUtils.toCamelCase(modelClassName, naming.getUppercaseAcronyms(), false));
         m.addThrownException(new ClassOrInterfaceType(null, "SQLException"));
 
         List<ColumnInfo> insertCols = columnsInfo.stream()
                 .filter(c -> !(pkIsAuto && c.name.equals(pkField)))
                 .collect(Collectors.toList());
 
-        String columnList = insertCols.stream().map(c -> c.name).collect(Collectors.joining(", "));
-        String placeholders = insertCols.stream().map(c -> "?").collect(Collectors.joining(", "));
+        String paramName = StringUtils.toCamelCase(modelClassName, naming.getUppercaseAcronyms(), false);
 
         StringBuilder block = new StringBuilder();
         block.append("{\n");
-        block.append("  String sql = \"INSERT INTO ").append(tableName).append(" (").append(columnList).append(") VALUES (").append(placeholders).append(")\";\n");
         if (pkIsAuto) {
-            block.append("  try (PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {\n");
+            block.append("        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {\n");
         } else {
-            block.append("  try (PreparedStatement ps = conn.prepareStatement(sql)) {\n");
+            block.append("        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {\n");
         }
+
+        // Set parameters
         for (int i = 0; i < insertCols.size(); i++) {
             ColumnInfo c = insertCols.get(i);
-            String getter = "entity.get" + StringUtils.toCamelCase(c.name, naming.getUppercaseAcronyms(), true) + "()";
+            String getter = paramName + ".get" + StringUtils.toCamelCase(c.name, naming.getUppercaseAcronyms(), true) + "()";
             int idx = i + 1;
-            if ("java.time.LocalDateTime".equals(c.javaType)) {
-                block.append("   ps.setTimestamp(").append(idx).append(", toTimestamp(").append(getter).append("));\n");
+
+            if (c.isForeignKey) {
+                String baseName = c.name.toLowerCase().endsWith("_id") ? c.name.substring(0, c.name.length() - 3) : c.name;
+                String relationshipName = StringUtils.toCamelCase(baseName, naming.getUppercaseAcronyms(), true);
+                String relationGetter = paramName + ".get" + relationshipName + "()";
+                String relatedPk = c.referencedTable + "_id";
+                String relatedPkCamel = StringUtils.toCamelCase(relatedPk, naming.getUppercaseAcronyms(), true);
+
+                block.append("            if (").append(relationGetter).append(" != null && ")
+                        .append(relationGetter).append(".get").append(relatedPkCamel).append("() > 0) {\n");
+                block.append("                ps.setInt(").append(idx).append(", ").append(relationGetter)
+                        .append(".get").append(relatedPkCamel).append("());\n");
+                block.append("            } else {\n");
+                block.append("                ps.setNull(").append(idx).append(", Types.INTEGER);\n");
+                block.append("            }\n");
+            } else if ("java.time.LocalDateTime".equals(c.javaType)) {
+                block.append("            ps.setTimestamp(").append(idx).append(", Timestamp.valueOf(\n");
+                block.append("                ").append(getter).append(" != null ? ").append(getter)
+                        .append(" : java.time.LocalDateTime.now()\n");
+                block.append("            ));\n");
+            } else if (Arrays.asList("Integer", "Long", "Float", "Double").contains(c.javaType)) {
+                block.append("            ").append(c.javaType).append(" val").append(idx).append(" = ").append(getter).append(";\n");
+                block.append("            if (val").append(idx).append(" != null) {\n");
+                block.append("                ps.").append(getPreparedStatementSetter(c.javaType)).append("(").append(idx).append(", val").append(idx).append(");\n");
+                block.append("            } else {\n");
+                block.append("                ps.setNull(").append(idx).append(", ").append(getTypesConstant(c.javaType)).append(");\n");
+                block.append("            }\n");
             } else {
-                block.append("   ps.").append(getPreparedStatementSetter(c.javaType)).append("(").append(idx).append(", ").append(getter).append(");\n");
+                block.append("            ps.").append(getPreparedStatementSetter(c.javaType))
+                        .append("(").append(idx).append(", ").append(getter).append(");\n");
             }
         }
-        block.append("   int rows = ps.executeUpdate();\n");
+
+        block.append("\n");
+        block.append("            ps.executeUpdate();\n");
+
         if (pkIsAuto) {
-            block.append("   if (rows > 0) {\n");
-            block.append("     try (ResultSet genKeys = ps.getGeneratedKeys()) {\n");
-            block.append("       if (genKeys.next()) {\n");
-            block.append("         return genKeys.").append(getResultSetGetter(idType)).append("(1);\n");
-            block.append("       }\n");
-            block.append("     }\n");
-            block.append("   }\n");
-            block.append("   return null;\n");
-        } else {
-            block.append("   return entity.get").append(StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), true)).append("();\n");
+            block.append("\n");
+            block.append("            try (ResultSet rs = ps.getGeneratedKeys()) {\n");
+            block.append("                if (rs.next()) {\n");
+            block.append("                    int id = rs.getInt(1);\n");
+            block.append("                    ").append(paramName).append(".set")
+                    .append(StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), true))
+                    .append("(id);\n");
+            block.append("                    return id;\n");
+            block.append("                }\n");
+            block.append("            }\n");
         }
-        block.append("  }\n");
-        block.append("}\n");
+
+        block.append("        }\n");
+        if (pkIsAuto) {
+            block.append("        return -1;\n");
+        } else {
+            String pkGetter = paramName + ".get" + StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), true) + "()";
+            block.append("        return ").append(pkGetter).append(";\n");
+        }
+        block.append("    }");
 
         m.setBody(StaticJavaParser.parseBlock(block.toString()));
+    }
+
+    private static void createFindByIdMethod(
+            ClassOrInterfaceDeclaration daoClass,
+            String tableName,
+            String modelClassName,
+            String pkField,
+            String idType,
+            List<ColumnInfo> columnsInfo,
+            NamingStrategyConfig naming) {
+
+        MethodDeclaration m = daoClass.addMethod("findById", Modifier.Keyword.PUBLIC);
+        m.setType(modelClassName);
+        m.addParameter("Connection", "conn");
+        m.addParameter(mapJavaTypeToMethod(idType), "id");
+        m.addThrownException(new ClassOrInterfaceType(null, "SQLException"));
+
+        StringBuilder block = new StringBuilder();
+        block.append("{\n");
+        block.append("        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_ID_SQL)) {\n");
+        block.append("            ps.setInt(1, id);\n");
+        block.append("            try (ResultSet rs = ps.executeQuery()) {\n");
+        block.append("                return rs.next() ? extract(rs) : null;\n");
+        block.append("            }\n");
+        block.append("        }\n");
+        block.append("    }");
+
+        m.setBody(StaticJavaParser.parseBlock(block.toString()));
+    }
+
+    private static void createFindAllMethod(
+            ClassOrInterfaceDeclaration daoClass,
+            String tableName,
+            String modelClassName,
+            List<ColumnInfo> columnsInfo,
+            NamingStrategyConfig naming) {
+
+        MethodDeclaration m = daoClass.addMethod("findAll", Modifier.Keyword.PUBLIC);
+        m.setType("List<" + modelClassName + ">");
+        m.addParameter("Connection", "conn");
+        m.addThrownException(new ClassOrInterfaceType(null, "SQLException"));
+
+        StringBuilder block = new StringBuilder();
+        block.append("{\n");
+        block.append("        List<").append(modelClassName).append("> list = new ArrayList<>();\n");
+        block.append("        try (PreparedStatement ps = conn.prepareStatement(SELECT_ALL_SQL);\n");
+        block.append("             ResultSet rs = ps.executeQuery()) {\n");
+        block.append("            while (rs.next()) {\n");
+        block.append("                list.add(extract(rs));\n");
+        block.append("            }\n");
+        block.append("        }\n");
+        block.append("        return list;\n");
+        block.append("    }");
+
+        m.setBody(StaticJavaParser.parseBlock(block.toString()));
+    }
+
+    private static void createRelationshipMethods(
+            ClassOrInterfaceDeclaration daoClass,
+            String tableName,
+            String modelClassName,
+            List<ColumnInfo> columnsInfo,
+            List<Relationship> relationships,
+            NamingStrategyConfig naming) {
+
+        if (relationships == null) return;
+
+        for (Relationship rel : relationships) {
+            if (rel.getType() == Relationship.Type.MANY_TO_ONE) {
+                String fkColumn = rel.getFkColumn();
+                String methodName = "findBy" + StringUtils.toCamelCase(fkColumn, naming.getUppercaseAcronyms(), true);
+                String constantName = "SELECT_BY_" + fkColumn.toUpperCase() + "_SQL";
+
+                MethodDeclaration m = daoClass.addMethod(methodName, Modifier.Keyword.PUBLIC);
+                m.setType("List<" + modelClassName + ">");
+                m.addParameter("Connection", "conn");
+                m.addParameter("int", StringUtils.toCamelCase(fkColumn, naming.getUppercaseAcronyms(), false));
+                m.addThrownException(new ClassOrInterfaceType(null, "SQLException"));
+
+                StringBuilder block = new StringBuilder();
+                block.append("{\n");
+                block.append("        List<").append(modelClassName).append("> list = new ArrayList<>();\n");
+                block.append("        try (PreparedStatement ps = conn.prepareStatement(").append(constantName).append(")) {\n");
+                block.append("            ps.setInt(1, ").append(StringUtils.toCamelCase(fkColumn, naming.getUppercaseAcronyms(), false)).append(");\n");
+                block.append("            try (ResultSet rs = ps.executeQuery()) {\n");
+                block.append("                while (rs.next()) list.add(extract(rs));\n");
+                block.append("            }\n");
+                block.append("        }\n");
+                block.append("        return list;\n");
+                block.append("    }");
+
+                m.setBody(StaticJavaParser.parseBlock(block.toString()));
+            }
+        }
     }
 
     private static void createUpdateMethod(
             ClassOrInterfaceDeclaration daoClass,
             String tableName,
-            String recordClassName,
+            String modelClassName,
             String pkField,
             String idType,
             List<ColumnInfo> columnsInfo,
             NamingStrategyConfig naming) {
 
         MethodDeclaration m = daoClass.addMethod("update", Modifier.Keyword.PUBLIC);
-        m.setType("int");
-        m.addParameter(recordClassName, "entity");
+        m.setType("boolean");
+        m.addParameter("Connection", "conn");
+        m.addParameter(modelClassName, StringUtils.toCamelCase(modelClassName, naming.getUppercaseAcronyms(), false));
         m.addThrownException(new ClassOrInterfaceType(null, "SQLException"));
 
         List<ColumnInfo> updateCols = columnsInfo.stream()
                 .filter(c -> !c.name.equalsIgnoreCase(pkField))
                 .collect(Collectors.toList());
 
-        String setClause = updateCols.stream().map(c -> c.name + " = ?").collect(Collectors.joining(", "));
+        String paramName = StringUtils.toCamelCase(modelClassName, naming.getUppercaseAcronyms(), false);
 
         StringBuilder block = new StringBuilder();
         block.append("{\n");
-        block.append("  String sql = \"UPDATE ").append(tableName).append(" SET ").append(setClause)
-                .append(" WHERE ").append(pkField).append(" = ?\";\n");
-        block.append("  try (PreparedStatement ps = conn.prepareStatement(sql)) {\n");
+        block.append("        try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {\n");
 
+        // Set update parameters
         for (int i = 0; i < updateCols.size(); i++) {
             ColumnInfo c = updateCols.get(i);
-            String getter = "entity.get" + StringUtils.toCamelCase(c.name, naming.getUppercaseAcronyms(), true) + "()";
+            String getter = paramName + ".get" + StringUtils.toCamelCase(c.name, naming.getUppercaseAcronyms(), true) + "()";
             int idx = i + 1;
-            if ("java.time.LocalDateTime".equals(c.javaType)) {
-                block.append("   ps.setTimestamp(").append(idx).append(", toTimestamp(").append(getter).append("));\n");
+
+            if (c.isForeignKey) {
+                String baseName = c.name.toLowerCase().endsWith("_id") ? c.name.substring(0, c.name.length() - 3) : c.name;
+                String relationshipName = StringUtils.toCamelCase(baseName, naming.getUppercaseAcronyms(), true);
+                String relationGetter = paramName + ".get" + relationshipName + "()";
+                String relatedPk = c.referencedTable + "_id";
+                String relatedPkCamel = StringUtils.toCamelCase(relatedPk, naming.getUppercaseAcronyms(), true);
+
+                block.append("            if (").append(relationGetter).append(" != null && ")
+                        .append(relationGetter).append(".get").append(relatedPkCamel).append("() > 0) {\n");
+                block.append("                ps.setInt(").append(idx).append(", ").append(relationGetter)
+                        .append(".get").append(relatedPkCamel).append("());\n");
+                block.append("            } else {\n");
+                block.append("                ps.setNull(").append(idx).append(", Types.INTEGER);\n");
+                block.append("            }\n");
+            } else if ("java.time.LocalDateTime".equals(c.javaType)) {
+                block.append("            ps.setTimestamp(").append(idx).append(", Timestamp.valueOf(\n");
+                block.append("                ").append(getter).append(" != null ? ").append(getter)
+                        .append(" : java.time.LocalDateTime.now()\n");
+                block.append("            ));\n");
+            } else if (Arrays.asList("Integer", "Long", "Float", "Double").contains(c.javaType)) {
+                block.append("            ").append(c.javaType).append(" val").append(idx).append(" = ").append(getter).append(";\n");
+                block.append("            if (val").append(idx).append(" != null) {\n");
+                block.append("                ps.").append(getPreparedStatementSetter(c.javaType)).append("(").append(idx).append(", val").append(idx).append(");\n");
+                block.append("            } else {\n");
+                block.append("                ps.setNull(").append(idx).append(", ").append(getTypesConstant(c.javaType)).append(");\n");
+                block.append("            }\n");
             } else {
-                block.append("   ps.").append(getPreparedStatementSetter(c.javaType)).append("(").append(idx).append(", ").append(getter).append(");\n");
+                block.append("            ps.").append(getPreparedStatementSetter(c.javaType))
+                        .append("(").append(idx).append(", ").append(getter).append(");\n");
             }
         }
 
-        // set PK at the end
-        block.append("   ps.").append(getPreparedStatementSetter(idType)).append("(")
-                .append(updateCols.size() + 1).append(", entity.get")
-                .append(StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), true)).append("());\n");
+        // Set PK parameter
+        String pkGetter = paramName + ".get" + StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), true) + "()";
+        block.append("\n");
+        block.append("            ps.setInt(").append(updateCols.size() + 1).append(", ").append(pkGetter).append(");\n");
 
-        block.append("   return ps.executeUpdate();\n");
-        block.append("  }\n");
-        block.append("}\n");
+        block.append("\n");
+        block.append("            return ps.executeUpdate() > 0;\n");
+        block.append("        }\n");
+        block.append("    }");
 
         m.setBody(StaticJavaParser.parseBlock(block.toString()));
     }
@@ -337,37 +485,83 @@ public class DaoGenerator {
             String idType,
             NamingStrategyConfig naming) {
 
-        String pkCamel = StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), false);
-        MethodDeclaration m = daoClass.addMethod("delete", Modifier.Keyword.PUBLIC);
-        m.setType("int");
-        m.addParameter(idType, pkCamel);
+        MethodDeclaration m = daoClass.addMethod("deleteById", Modifier.Keyword.PUBLIC);
+        m.setType("boolean");
+        m.addParameter("Connection", "conn");
+        m.addParameter(mapJavaTypeToMethod(idType), "id");
         m.addThrownException(new ClassOrInterfaceType(null, "SQLException"));
 
         StringBuilder block = new StringBuilder();
         block.append("{\n");
-        block.append("  String sql = \"DELETE FROM ").append(tableName).append(" WHERE ").append(pkField).append(" = ?\";\n");
-        block.append("  try (PreparedStatement ps = conn.prepareStatement(sql)) {\n");
-        block.append("   ps.").append(getPreparedStatementSetter(idType)).append("(1, ").append(pkCamel).append(");\n");
-        block.append("   return ps.executeUpdate();\n");
-        block.append("  }\n");
-        block.append("}\n");
+        block.append("        try (PreparedStatement ps = conn.prepareStatement(DELETE_SQL)) {\n");
+        block.append("            ps.setInt(1, id);\n");
+        block.append("            return ps.executeUpdate() > 0;\n");
+        block.append("        }\n");
+        block.append("    }");
 
         m.setBody(StaticJavaParser.parseBlock(block.toString()));
     }
 
-    private static void createHelperMethods(ClassOrInterfaceDeclaration daoClass) {
-        // toTimestamp
-        MethodDeclaration toTs = daoClass.addMethod("toTimestamp", Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC);
-        toTs.setType("Timestamp");
-        toTs.addParameter("LocalDateTime", "localDateTime");
-        toTs.setBody(StaticJavaParser.parseBlock("{ return localDateTime != null ? Timestamp.valueOf(localDateTime) : null; }"));
+    private static void createExtractMethod(
+            ClassOrInterfaceDeclaration daoClass,
+            String modelClassName,
+            List<ColumnInfo> columnsInfo,
+            NamingStrategyConfig naming) {
 
-        // toLocalDateTime
-        MethodDeclaration toLd = daoClass.addMethod("toLocalDateTime", Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC);
-        toLd.setType("LocalDateTime");
-        toLd.addParameter("Timestamp", "timestamp");
-        toLd.setBody(StaticJavaParser.parseBlock("{ return timestamp != null ? timestamp.toLocalDateTime() : null; }"));
+        MethodDeclaration m = daoClass.addMethod("extract", Modifier.Keyword.PRIVATE);
+        m.setType(modelClassName);
+        m.addParameter("ResultSet", "rs");
+        m.addThrownException(new ClassOrInterfaceType(null, "SQLException"));
+
+        String objectName = StringUtils.toCamelCase(modelClassName, naming.getUppercaseAcronyms(), false);
+
+        StringBuilder block = new StringBuilder();
+        block.append("{\n");
+        block.append("        ").append(modelClassName).append(" ").append(objectName)
+                .append(" = new ").append(modelClassName).append("();\n");
+
+        // Set all fields
+        for (ColumnInfo c : columnsInfo) {
+            String setter = objectName + ".set" + StringUtils.toCamelCase(c.name, naming.getUppercaseAcronyms(), true);
+
+            if ("java.time.LocalDateTime".equals(c.javaType)) {
+                block.append("        Timestamp ").append(c.name).append(" = rs.getTimestamp(\"").append(c.name).append("\");\n");
+                block.append("        if (").append(c.name).append(" != null) ").append(setter).append("(").append(c.name).append(".toLocalDateTime());\n");
+            } else if (c.isForeignKey) {
+                String baseName = c.name.toLowerCase().endsWith("_id") ? c.name.substring(0, c.name.length() - 3) : c.name;
+                String relationshipName = StringUtils.toCamelCase(baseName, naming.getUppercaseAcronyms(), true);
+                String relatedObjectName = StringUtils.toCamelCase(baseName, naming.getUppercaseAcronyms(), false);
+                String relatedClass = StringUtils.toCamelCase(c.referencedTable, naming.getUppercaseAcronyms(), true) + "DTO";
+                String relatedPk = c.referencedTable + "_id";
+                String relatedPkCamel = StringUtils.toCamelCase(relatedPk, naming.getUppercaseAcronyms(), true);
+
+                block.append("        Integer ").append(c.name).append(" = rs.getObject(\"").append(c.name).append("\", Integer.class);\n");
+                block.append("        ").append(setter).append("(").append(c.name).append(");\n");
+                block.append("        if (").append(c.name).append(" != null && ").append(c.name).append(" > 0) {\n");
+                block.append("            ").append(relatedClass).append(" ").append(relatedObjectName)
+                        .append(" = new ").append(relatedClass).append("();\n");
+                block.append("            ").append(relatedObjectName)
+                        .append(".set").append(relatedPkCamel)
+                        .append("(").append(c.name).append(");\n");
+                block.append("            ").append(objectName)
+                        .append(".set").append(relationshipName)
+                        .append("(").append(relatedObjectName).append(");\n");
+                block.append("        }\n");
+            } else if (Arrays.asList("Integer", "Long", "Float", "Double").contains(c.javaType)) {
+                block.append("        ").append(c.javaType).append(" ").append(c.name).append(" = rs.getObject(\"").append(c.name).append("\", ").append(c.javaType).append(".class);\n");
+                block.append("        ").append(setter).append("(").append(c.name).append(");\n");
+            } else {
+                block.append("        ").append(setter).append("(rs.")
+                        .append(getResultSetGetter(c.javaType)).append("(\"").append(c.name).append("\"));\n");
+            }
+        }
+
+        block.append("        return ").append(objectName).append(";\n");
+        block.append("    }");
+
+        m.setBody(StaticJavaParser.parseBlock(block.toString()));
     }
+
 
     private static void writeToFile(TargetConfig target, String packageName, String className, CompilationUnit cu) throws IOException {
         Path outputPath = Paths.get(target.getOutputDirectory(), packageName.replace(".", "/"), className + ".java");
@@ -377,20 +571,6 @@ public class DaoGenerator {
     }
 
     /* ---------- utility methods ---------- */
-
-    private static String toDbColumn(String fieldName) {
-        StringBuilder result = new StringBuilder();
-        for (int i = 0; i < fieldName.length(); i++) {
-            char c = fieldName.charAt(i);
-            if (Character.isUpperCase(c)) {
-                if (i > 0) result.append('_');
-                result.append(Character.toLowerCase(c));
-            } else {
-                result.append(c);
-            }
-        }
-        return result.toString();
-    }
 
     private static String mapDbTypeToJava(String dbType, String columnName, int decimalDigits) {
         if (columnName.equalsIgnoreCase("id") || columnName.toLowerCase().endsWith("_id")) {
@@ -407,6 +587,16 @@ public class DaoGenerator {
             case "DATE", "TIMESTAMP", "TIMESTAMPTZ" -> "java.time.LocalDateTime";
             case "JSON", "JSONB" -> "java.util.Map<String, Object>";
             default -> "String";
+        };
+    }
+
+    private static String mapJavaTypeToMethod(String javaType) {
+        return switch (javaType) {
+            case "Integer" -> "int";
+            case "Long" -> "long";
+            case "Float" -> "float";
+            case "Double" -> "double";
+            default -> javaType;
         };
     }
 
@@ -433,6 +623,16 @@ public class DaoGenerator {
             case "java.time.LocalDateTime" -> "setTimestamp";
             case "java.util.Map<String, Object>" -> "setObject";
             default -> "setObject";
+        };
+    }
+
+    private static String getTypesConstant(String javaType) {
+        return switch (javaType) {
+            case "Integer" -> "Types.INTEGER";
+            case "Long" -> "Types.BIGINT";
+            case "Float" -> "Types.FLOAT";
+            case "Double" -> "Types.DOUBLE";
+            default -> "Types.OTHER";
         };
     }
 }
