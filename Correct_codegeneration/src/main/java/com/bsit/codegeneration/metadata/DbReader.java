@@ -3,10 +3,7 @@ package com.bsit.codegeneration.metadata;
 import java.sql.*;
 import java.util.*;
 import com.bsit.codegeneration.model.*;
-import com.bsit.codegeneration.parser.DaoGenerator;
-import com.bsit.codegeneration.parser.DtoGenerator;
-import com.bsit.codegeneration.parser.RecordGenerator;
-import com.bsit.codegeneration.parser.RepositoryGenerator;
+import com.bsit.codegeneration.parser.*;
 import com.bsit.codegeneration.util.Relationship;
 import com.bsit.codegeneration.util.Relationship.Type;
 import org.slf4j.Logger;
@@ -61,7 +58,7 @@ public class DbReader {
 
                 try (ResultSet columns = metaData.getColumns(null, schema, tableName, "%")) {
                     if (dtoConfig.isGenerate()) {
-                        DtoGenerator.generateDto(tableName, columns, dbConfig, target, dtoConfig, relationships, reverseRelationships);
+                        PojoGenerator.generateDto(tableName, columns, dbConfig, target, dtoConfig, relationships, reverseRelationships);
                     }
                 }
 
@@ -74,10 +71,18 @@ public class DbReader {
 
                 try (ResultSet columns = metaData.getColumns(null, schema, tableName, "%")) {
                     if (daoConfig.isGenerate()) {
-                        DaoGenerator.generateDao(tableName, columns, dbConfig, target, dtoConfig, relationships, reverseRelationships);
+                        JdbcDaoGenerator.generateDao(tableName, columns, dbConfig, target, dtoConfig, relationships, reverseRelationships);
                         currentLogger.info("DAO generated for: {}", tableName);
                     }
                 }
+
+                try (ResultSet columns = metaData.getColumns(null, schema, tableName, "%")) {
+                    if (daoConfig.isGenerate()) {
+                        JdbiDaoGenerator.generateDao(tableName, columns, dbConfig, target, daoConfig, relationships, reverseRelationships);
+                        System.out.println(" DAO generated for: " + tableName);
+                    }
+                }
+
 
                 try (ResultSet columns = metaData.getColumns(null, schema, tableName, "%")) {
                     if (repositoryConfig.isGenerate()) {
