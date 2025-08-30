@@ -20,8 +20,8 @@ public class JdbcCountryDao {
 
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s)
-        VALUES (?, ?)
-        """.formatted(TABLE, COL_COUNTRY, COL_LAST_UPDATE);
+        VALUES (?, ?) RETURNING %s
+        """.formatted(TABLE, COL_COUNTRY, COL_LAST_UPDATE, COL_COUNTRY_ID);
 
     private static final String SELECT_BY_ID_SQL = """
         SELECT * FROM %s WHERE %s = ?
@@ -42,10 +42,9 @@ public class JdbcCountryDao {
         """.formatted(TABLE, COL_COUNTRY_ID);
 
     public int insert(Connection conn, Country country) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
             setCountryParams(ps, country);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
+            try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     int id = rs.getInt(1);
                     country.setCountryID(id);
@@ -64,22 +63,16 @@ public class JdbcCountryDao {
             if (countrys.get(i) == null)
                 throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-            for (Country country : countrys) {
-                setCountryParams(ps, country);
-                ps.addBatch();
-            }
-            results = ps.executeBatch();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                int index = 0;
-                while (rs.next() && index < countrys.size()) {
-                    try {
-                        countrys.get(index).setCountryID(rs.getInt(1));
-                    } catch (Exception e) {
-                        // if mapping the key fails, wrap to give context
-                        throw new SQLException("Failed to set generated key for index " + index + ": " + e.getMessage(), e);
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+            results = new int[countrys.size()];
+            for (int i = 0; i < countrys.size(); i++) {
+                Country item = countrys.get(i);
+                setCountryParams(ps, item);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        item.setCountryID(rs.getInt(1));
+                        results[i] = 1;
                     }
-                    index++;
                 }
             }
         }
@@ -114,7 +107,7 @@ public class JdbcCountryDao {
     }
 
     public boolean update(Connection conn, Country country) throws SQLException {
-        if (country.getCountryID() == null)
+        if (country.getCountryID() == 0)
             throw new IllegalArgumentException("Primary key cannot be null for update");
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
             setCountryParams(ps, country);
@@ -129,7 +122,7 @@ public class JdbcCountryDao {
         for (Country country : countrys) {
             if (country == null)
                 throw new IllegalArgumentException("Null DTO in batch update");
-            if (country.getCountryID() == null)
+            if (country.getCountryID() == 0)
                 throw new IllegalArgumentException("Null primary key in batch update");
         }
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {

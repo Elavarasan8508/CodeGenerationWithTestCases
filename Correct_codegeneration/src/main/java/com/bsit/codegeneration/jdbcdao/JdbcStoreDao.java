@@ -22,8 +22,8 @@ public class JdbcStoreDao {
 
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s, %s)
-        VALUES (?, ?, ?)
-        """.formatted(TABLE, COL_MANAGER_STAFF_ID, COL_ADDRESS_ID, COL_LAST_UPDATE);
+        VALUES (?, ?, ?) RETURNING %s
+        """.formatted(TABLE, COL_MANAGER_STAFF_ID, COL_ADDRESS_ID, COL_LAST_UPDATE, COL_STORE_ID);
 
     private static final String SELECT_BY_ID_SQL = """
         SELECT * FROM %s WHERE %s = ?
@@ -52,10 +52,9 @@ public class JdbcStoreDao {
         """.formatted(TABLE, COL_STORE_ID);
 
     public int insert(Connection conn, Store store) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
             setStoreParams(ps, store);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
+            try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     int id = rs.getInt(1);
                     store.setStoreID(id);
@@ -74,22 +73,16 @@ public class JdbcStoreDao {
             if (stores.get(i) == null)
                 throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-            for (Store store : stores) {
-                setStoreParams(ps, store);
-                ps.addBatch();
-            }
-            results = ps.executeBatch();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                int index = 0;
-                while (rs.next() && index < stores.size()) {
-                    try {
-                        stores.get(index).setStoreID(rs.getInt(1));
-                    } catch (Exception e) {
-                        // if mapping the key fails, wrap to give context
-                        throw new SQLException("Failed to set generated key for index " + index + ": " + e.getMessage(), e);
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+            results = new int[stores.size()];
+            for (int i = 0; i < stores.size(); i++) {
+                Store item = stores.get(i);
+                setStoreParams(ps, item);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        item.setStoreID(rs.getInt(1));
+                        results[i] = 1;
                     }
-                    index++;
                 }
             }
         }
@@ -124,7 +117,7 @@ public class JdbcStoreDao {
     }
 
     public boolean update(Connection conn, Store store) throws SQLException {
-        if (store.getStoreID() == null)
+        if (store.getStoreID() == 0)
             throw new IllegalArgumentException("Primary key cannot be null for update");
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
             setStoreParams(ps, store);
@@ -139,7 +132,7 @@ public class JdbcStoreDao {
         for (Store store : stores) {
             if (store == null)
                 throw new IllegalArgumentException("Null DTO in batch update");
-            if (store.getStoreID() == null)
+            if (store.getStoreID() == 0)
                 throw new IllegalArgumentException("Null primary key in batch update");
         }
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {

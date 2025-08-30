@@ -40,8 +40,8 @@ public class JdbcFilmDao {
 
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """.formatted(TABLE, COL_TITLE, COL_DESCRIPTION, COL_RELEASE_YEAR, COL_LANGUAGE_ID, COL_ORIGINAL_LANGUAGE_ID, COL_RENTAL_DURATION, COL_RENTAL_RATE, COL_LENGTH, COL_REPLACEMENT_COST, COL_RATING, COL_SPECIAL_FEATURES, COL_LAST_UPDATE);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING %s
+        """.formatted(TABLE, COL_TITLE, COL_DESCRIPTION, COL_RELEASE_YEAR, COL_LANGUAGE_ID, COL_ORIGINAL_LANGUAGE_ID, COL_RENTAL_DURATION, COL_RENTAL_RATE, COL_LENGTH, COL_REPLACEMENT_COST, COL_RATING, COL_SPECIAL_FEATURES, COL_LAST_UPDATE, COL_FILM_ID);
 
     private static final String SELECT_BY_ID_SQL = """
         SELECT * FROM %s WHERE %s = ?
@@ -70,10 +70,9 @@ public class JdbcFilmDao {
         """.formatted(TABLE, COL_FILM_ID);
 
     public int insert(Connection conn, Film film) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
             setFilmParams(ps, film);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
+            try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     int id = rs.getInt(1);
                     film.setFilmID(id);
@@ -92,22 +91,16 @@ public class JdbcFilmDao {
             if (films.get(i) == null)
                 throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-            for (Film film : films) {
-                setFilmParams(ps, film);
-                ps.addBatch();
-            }
-            results = ps.executeBatch();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                int index = 0;
-                while (rs.next() && index < films.size()) {
-                    try {
-                        films.get(index).setFilmID(rs.getInt(1));
-                    } catch (Exception e) {
-                        // if mapping the key fails, wrap to give context
-                        throw new SQLException("Failed to set generated key for index " + index + ": " + e.getMessage(), e);
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+            results = new int[films.size()];
+            for (int i = 0; i < films.size(); i++) {
+                Film item = films.get(i);
+                setFilmParams(ps, item);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        item.setFilmID(rs.getInt(1));
+                        results[i] = 1;
                     }
-                    index++;
                 }
             }
         }
@@ -142,7 +135,7 @@ public class JdbcFilmDao {
     }
 
     public boolean update(Connection conn, Film film) throws SQLException {
-        if (film.getFilmID() == null)
+        if (film.getFilmID() == 0)
             throw new IllegalArgumentException("Primary key cannot be null for update");
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
             setFilmParams(ps, film);
@@ -157,7 +150,7 @@ public class JdbcFilmDao {
         for (Film film : films) {
             if (film == null)
                 throw new IllegalArgumentException("Null DTO in batch update");
-            if (film.getFilmID() == null)
+            if (film.getFilmID() == 0)
                 throw new IllegalArgumentException("Null primary key in batch update");
         }
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {

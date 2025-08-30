@@ -36,8 +36,8 @@ public class JdbcStaffDao {
 
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """.formatted(TABLE, COL_FIRST_NAME, COL_LAST_NAME, COL_ADDRESS_ID, COL_EMAIL, COL_STORE_ID, COL_ACTIVE, COL_USERNAME, COL_PASSWORD, COL_LAST_UPDATE, COL_PICTURE);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING %s
+        """.formatted(TABLE, COL_FIRST_NAME, COL_LAST_NAME, COL_ADDRESS_ID, COL_EMAIL, COL_STORE_ID, COL_ACTIVE, COL_USERNAME, COL_PASSWORD, COL_LAST_UPDATE, COL_PICTURE, COL_STAFF_ID);
 
     private static final String SELECT_BY_ID_SQL = """
         SELECT * FROM %s WHERE %s = ?
@@ -66,10 +66,9 @@ public class JdbcStaffDao {
         """.formatted(TABLE, COL_STAFF_ID);
 
     public int insert(Connection conn, Staff staff) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
             setStaffParams(ps, staff);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
+            try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     int id = rs.getInt(1);
                     staff.setStaffID(id);
@@ -88,22 +87,16 @@ public class JdbcStaffDao {
             if (staffs.get(i) == null)
                 throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-            for (Staff staff : staffs) {
-                setStaffParams(ps, staff);
-                ps.addBatch();
-            }
-            results = ps.executeBatch();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                int index = 0;
-                while (rs.next() && index < staffs.size()) {
-                    try {
-                        staffs.get(index).setStaffID(rs.getInt(1));
-                    } catch (Exception e) {
-                        // if mapping the key fails, wrap to give context
-                        throw new SQLException("Failed to set generated key for index " + index + ": " + e.getMessage(), e);
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+            results = new int[staffs.size()];
+            for (int i = 0; i < staffs.size(); i++) {
+                Staff item = staffs.get(i);
+                setStaffParams(ps, item);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        item.setStaffID(rs.getInt(1));
+                        results[i] = 1;
                     }
-                    index++;
                 }
             }
         }
@@ -138,7 +131,7 @@ public class JdbcStaffDao {
     }
 
     public boolean update(Connection conn, Staff staff) throws SQLException {
-        if (staff.getStaffID() == null)
+        if (staff.getStaffID() == 0)
             throw new IllegalArgumentException("Primary key cannot be null for update");
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
             setStaffParams(ps, staff);
@@ -153,7 +146,7 @@ public class JdbcStaffDao {
         for (Staff staff : staffs) {
             if (staff == null)
                 throw new IllegalArgumentException("Null DTO in batch update");
-            if (staff.getStaffID() == null)
+            if (staff.getStaffID() == 0)
                 throw new IllegalArgumentException("Null primary key in batch update");
         }
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
@@ -241,7 +234,7 @@ public class JdbcStaffDao {
         ps.setString(8, staff.getPassword());
         LocalDateTime updateTime9 = Objects.requireNonNullElse(staff.getLastUpdate(), LocalDateTime.now());
         ps.setTimestamp(9, Timestamp.valueOf(updateTime9));
-        ps.setBytes(10, staff.getPicture());
+        ps.setString(10, staff.getPicture());
     }
 
     private Staff extract(ResultSet rs) throws SQLException {
@@ -272,7 +265,7 @@ public class JdbcStaffDao {
         Timestamp last_update = rs.getTimestamp(COL_LAST_UPDATE);
         if (last_update != null)
             staff.setLastUpdate(last_update.toLocalDateTime());
-        staff.setPicture(rs.getBytes(COL_PICTURE));
+        staff.setPicture(rs.getString(COL_PICTURE));
         return staff;
     }
 }

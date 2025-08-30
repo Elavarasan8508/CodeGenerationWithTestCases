@@ -103,7 +103,7 @@ public class JdbcFilmCategoryDao {
     }
 
     public boolean update(Connection conn, FilmCategory filmcategory) throws SQLException {
-        if (filmcategory.getFilmID() == null)
+        if (filmcategory.getFilmID() == 0)
             throw new IllegalArgumentException("Primary key cannot be null for update");
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
             setFilmCategoryParams(ps, filmcategory);
@@ -118,7 +118,7 @@ public class JdbcFilmCategoryDao {
         for (FilmCategory filmcategory : filmcategorys) {
             if (filmcategory == null)
                 throw new IllegalArgumentException("Null DTO in batch update");
-            if (filmcategory.getFilmID() == null)
+            if (filmcategory.getFilmID() == 0)
                 throw new IllegalArgumentException("Null primary key in batch update");
         }
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {

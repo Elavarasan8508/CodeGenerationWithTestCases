@@ -20,8 +20,8 @@ public class JdbcCategoryDao {
 
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s)
-        VALUES (?, ?)
-        """.formatted(TABLE, COL_NAME, COL_LAST_UPDATE);
+        VALUES (?, ?) RETURNING %s
+        """.formatted(TABLE, COL_NAME, COL_LAST_UPDATE, COL_CATEGORY_ID);
 
     private static final String SELECT_BY_ID_SQL = """
         SELECT * FROM %s WHERE %s = ?
@@ -42,10 +42,9 @@ public class JdbcCategoryDao {
         """.formatted(TABLE, COL_CATEGORY_ID);
 
     public int insert(Connection conn, Category category) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
             setCategoryParams(ps, category);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
+            try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     int id = rs.getInt(1);
                     category.setCategoryID(id);
@@ -64,22 +63,16 @@ public class JdbcCategoryDao {
             if (categorys.get(i) == null)
                 throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-            for (Category category : categorys) {
-                setCategoryParams(ps, category);
-                ps.addBatch();
-            }
-            results = ps.executeBatch();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                int index = 0;
-                while (rs.next() && index < categorys.size()) {
-                    try {
-                        categorys.get(index).setCategoryID(rs.getInt(1));
-                    } catch (Exception e) {
-                        // if mapping the key fails, wrap to give context
-                        throw new SQLException("Failed to set generated key for index " + index + ": " + e.getMessage(), e);
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+            results = new int[categorys.size()];
+            for (int i = 0; i < categorys.size(); i++) {
+                Category item = categorys.get(i);
+                setCategoryParams(ps, item);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        item.setCategoryID(rs.getInt(1));
+                        results[i] = 1;
                     }
-                    index++;
                 }
             }
         }
@@ -114,7 +107,7 @@ public class JdbcCategoryDao {
     }
 
     public boolean update(Connection conn, Category category) throws SQLException {
-        if (category.getCategoryID() == null)
+        if (category.getCategoryID() == 0)
             throw new IllegalArgumentException("Primary key cannot be null for update");
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
             setCategoryParams(ps, category);
@@ -129,7 +122,7 @@ public class JdbcCategoryDao {
         for (Category category : categorys) {
             if (category == null)
                 throw new IllegalArgumentException("Null DTO in batch update");
-            if (category.getCategoryID() == null)
+            if (category.getCategoryID() == 0)
                 throw new IllegalArgumentException("Null primary key in batch update");
         }
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {

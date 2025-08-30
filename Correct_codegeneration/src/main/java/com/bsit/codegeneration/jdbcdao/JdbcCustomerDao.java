@@ -32,8 +32,8 @@ public class JdbcCustomerDao {
 
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s, %s, %s, %s, %s, %s, %s)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """.formatted(TABLE, COL_STORE_ID, COL_FIRST_NAME, COL_LAST_NAME, COL_EMAIL, COL_ADDRESS_ID, COL_ACTIVE, COL_CREATE_DATE, COL_LAST_UPDATE);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING %s
+        """.formatted(TABLE, COL_STORE_ID, COL_FIRST_NAME, COL_LAST_NAME, COL_EMAIL, COL_ADDRESS_ID, COL_ACTIVE, COL_CREATE_DATE, COL_LAST_UPDATE, COL_CUSTOMER_ID);
 
     private static final String SELECT_BY_ID_SQL = """
         SELECT * FROM %s WHERE %s = ?
@@ -62,10 +62,9 @@ public class JdbcCustomerDao {
         """.formatted(TABLE, COL_CUSTOMER_ID);
 
     public int insert(Connection conn, Customer customer) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
             setCustomerParams(ps, customer);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
+            try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     int id = rs.getInt(1);
                     customer.setCustomerID(id);
@@ -84,22 +83,16 @@ public class JdbcCustomerDao {
             if (customers.get(i) == null)
                 throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-            for (Customer customer : customers) {
-                setCustomerParams(ps, customer);
-                ps.addBatch();
-            }
-            results = ps.executeBatch();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                int index = 0;
-                while (rs.next() && index < customers.size()) {
-                    try {
-                        customers.get(index).setCustomerID(rs.getInt(1));
-                    } catch (Exception e) {
-                        // if mapping the key fails, wrap to give context
-                        throw new SQLException("Failed to set generated key for index " + index + ": " + e.getMessage(), e);
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+            results = new int[customers.size()];
+            for (int i = 0; i < customers.size(); i++) {
+                Customer item = customers.get(i);
+                setCustomerParams(ps, item);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        item.setCustomerID(rs.getInt(1));
+                        results[i] = 1;
                     }
-                    index++;
                 }
             }
         }
@@ -134,7 +127,7 @@ public class JdbcCustomerDao {
     }
 
     public boolean update(Connection conn, Customer customer) throws SQLException {
-        if (customer.getCustomerID() == null)
+        if (customer.getCustomerID() == 0)
             throw new IllegalArgumentException("Primary key cannot be null for update");
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
             setCustomerParams(ps, customer);
@@ -149,7 +142,7 @@ public class JdbcCustomerDao {
         for (Customer customer : customers) {
             if (customer == null)
                 throw new IllegalArgumentException("Null DTO in batch update");
-            if (customer.getCustomerID() == null)
+            if (customer.getCustomerID() == 0)
                 throw new IllegalArgumentException("Null primary key in batch update");
         }
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {

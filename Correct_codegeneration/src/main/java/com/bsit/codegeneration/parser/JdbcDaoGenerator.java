@@ -7,10 +7,12 @@ import com.github.javaparser.StaticJavaParser;
 import static com.github.javaparser.ParserConfiguration.LanguageLevel.*;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Modifier;
+import com.github.javaparser.ast.NodeList;
 import com.github.javaparser.ast.body.*;
 import com.github.javaparser.ast.expr.*;
 import com.github.javaparser.ast.stmt.*;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
+import com.github.javaparser.ast.type.PrimitiveType;
 
 import java.io.IOException;
 import java.nio.file.*;
@@ -37,7 +39,7 @@ public class JdbcDaoGenerator {
             this.isForeignKey = false;
             this.referencedTable = null;
             this.dbType = dbType;
-            this.isBinary = dbType != null && (dbType.toUpperCase().contains("BLOB") || dbType.toUpperCase().equals("BYTEA") || dbType.toUpperCase().contains("BINARY"));
+            this.isBinary = dbType != null && (dbType.toUpperCase().contains("BLOB") || dbType.toUpperCase().equals("BYTEA") || dbType.toUpperCase().contains("BINARY") || dbType.toUpperCase().contains("RAW"));
         }
     }
 
@@ -53,6 +55,8 @@ public class JdbcDaoGenerator {
 
         // Configure JavaParser to support Java 15 text blocks
         StaticJavaParser.getParserConfiguration().setLanguageLevel(JAVA_15);
+
+        String vendor = dbConfig.getDatabaseVendor() == null ? "" : dbConfig.getDatabaseVendor().toUpperCase();
 
         NamingStrategyConfig naming = dbConfig.getNamingStrategy();
         String rawClassName = StringUtils.stripPrefix(tableName, naming.getStripPrefixes());
@@ -81,11 +85,16 @@ public class JdbcDaoGenerator {
             String colName = columns.getString("COLUMN_NAME");
             String dbType = columns.getString("TYPE_NAME");
             int decimalDigits = 0;
+            int columnSize = 0;
             try {
                 decimalDigits = columns.getInt("DECIMAL_DIGITS");
             } catch (Exception ignored) {
             }
-            String javaType = mapDbTypeToJava(dbType, colName, decimalDigits);
+            try {
+                columnSize = columns.getInt("COLUMN_SIZE");
+            } catch (Exception ignored) {
+            }
+            String javaType = mapDbTypeToJava(dbType, colName, decimalDigits, columnSize, vendor);
 
             boolean isAutoIncrement = false;
             try {
@@ -93,7 +102,7 @@ public class JdbcDaoGenerator {
                 isAutoIncrement = "YES".equals(isAutoStr);
             } catch (SQLException ignored) {
             }
-            if (dbType.equalsIgnoreCase("SERIAL")) {
+            if (dbType != null && dbType.equalsIgnoreCase("SERIAL")) {
                 isAutoIncrement = true;
             }
 
@@ -145,14 +154,14 @@ public class JdbcDaoGenerator {
         // class
         ClassOrInterfaceDeclaration daoClass = cu.addClass(daoClassName, Modifier.Keyword.PUBLIC);
 
-        // Create constants
-        createConstants(daoClass, tableName, columnsInfo, pkField, pkIsAuto, relationships, naming);
+        // Create constants (vendor-aware)
+        createConstants(daoClass, tableName, columnsInfo, pkField, pkIsAuto, relationships, naming, vendor);
 
-        // Create methods
-        createInsertMethod(daoClass, tableName, modelClassName, pkField, idType, columnsInfo, naming, pkIsAuto);
-        createBulkInsertMethod(daoClass, modelClassName, pkField, idType, columnsInfo, naming, pkIsAuto);
+        // Create methods (pass vendor where needed)
+        createInsertMethod(daoClass, tableName, modelClassName, pkField, idType, columnsInfo, naming, pkIsAuto, vendor);
+        createBulkInsertMethod(daoClass, modelClassName, pkField, idType, columnsInfo, naming, pkIsAuto, vendor);
         createFindByIdMethod(daoClass, tableName, modelClassName, pkField, idType, columnsInfo, naming);
-        createFindAllMethod(daoClass, tableName, modelClassName, columnsInfo, pkField, naming);
+        createFindAllMethod(daoClass, tableName, modelClassName, columnsInfo, pkField, naming, vendor);
         createUpdateMethod(daoClass, tableName, modelClassName, pkField, idType, columnsInfo, naming);
         createBulkUpdateMethod(daoClass, modelClassName, pkField, idType, columnsInfo, naming);
         createDeleteMethod(daoClass, tableName, pkField, idType, naming);
@@ -178,7 +187,8 @@ public class JdbcDaoGenerator {
             String pkField,
             boolean pkIsAuto,
             List<Relationship> relationships,
-            NamingStrategyConfig naming) {
+            NamingStrategyConfig naming,
+            String vendor) {
 
         // TABLE constant
         daoClass.addFieldWithInitializer("String", "TABLE",
@@ -206,7 +216,15 @@ public class JdbcDaoGenerator {
         StringBuilder insertSqlBuilder = new StringBuilder();
         insertSqlBuilder.append("\"\"\"\n");
         insertSqlBuilder.append("        INSERT INTO %s (").append(insertColumns).append(")\n");
-        insertSqlBuilder.append("        VALUES (").append(insertPlaceholders).append(")\n");
+        insertSqlBuilder.append("        VALUES (").append(insertPlaceholders).append(")");
+
+        // Postgres: append RETURNING clause if PK is auto
+        boolean isPostgres = vendor != null && (vendor.contains("POSTGRES") || vendor.contains("POSTGRESQL"));
+        if (pkIsAuto && isPostgres) {
+            insertSqlBuilder.append(" RETURNING %s\n");
+        } else {
+            insertSqlBuilder.append("\n");
+        }
         insertSqlBuilder.append("        \"\"\"");
 
         MethodCallExpr insertSqlExpr = new MethodCallExpr(
@@ -214,6 +232,9 @@ public class JdbcDaoGenerator {
         insertSqlExpr.addArgument(new NameExpr("TABLE"));
         for (ColumnInfo c : insertCols) {
             insertSqlExpr.addArgument(new NameExpr("COL_" + c.name.toUpperCase()));
+        }
+        if (pkIsAuto && isPostgres) {
+            insertSqlExpr.addArgument(new NameExpr("COL_" + pkField.toUpperCase()));
         }
 
         daoClass.addFieldWithInitializer("String", "INSERT_SQL", insertSqlExpr,
@@ -234,13 +255,14 @@ public class JdbcDaoGenerator {
                 Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
 
         // SELECT_ALL_SQL with LIMIT and OFFSET for pagination
-        StringBuilder selectAllBuilder = new StringBuilder();
-        selectAllBuilder.append("\"\"\"\n");
-        selectAllBuilder.append("        SELECT * FROM %s ORDER BY %s LIMIT ? OFFSET ?\n");
-        selectAllBuilder.append("        \"\"\"");
-
+        String selectAllFormat;
+        if ("ORACLE".equals(vendor)) {
+            selectAllFormat = "\"\"\"\n        SELECT * FROM %s ORDER BY %s OFFSET ? ROWS FETCH NEXT ? ROWS ONLY\n        \"\"\"";
+        } else {
+            selectAllFormat = "\"\"\"\n        SELECT * FROM %s ORDER BY %s LIMIT ? OFFSET ?\n        \"\"\"";
+        }
         MethodCallExpr selectAllSqlExpr = new MethodCallExpr(
-                StaticJavaParser.parseExpression(selectAllBuilder.toString()), "formatted");
+                StaticJavaParser.parseExpression(selectAllFormat), "formatted");
         selectAllSqlExpr.addArgument(new NameExpr("TABLE"));
         selectAllSqlExpr.addArgument(new NameExpr("COL_" + pkField.toUpperCase()));
 
@@ -318,7 +340,8 @@ public class JdbcDaoGenerator {
             String idType,
             List<ColumnInfo> columnsInfo,
             NamingStrategyConfig naming,
-            boolean pkIsAuto) {
+            boolean pkIsAuto,
+            String vendor) {
 
         MethodDeclaration m = daoClass.addMethod("insert", Modifier.Keyword.PUBLIC);
         m.setType("int");
@@ -333,8 +356,10 @@ public class JdbcDaoGenerator {
         TryStmt tryStmt = new TryStmt();
         BlockStmt tryBlock = new BlockStmt();
 
+        boolean isPostgres = vendor != null && (vendor.contains("POSTGRES") || vendor.contains("POSTGRESQL"));
+
         Expression psInitializer = pkIsAuto ?
-                StaticJavaParser.parseExpression("conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)") :
+                (isPostgres ? StaticJavaParser.parseExpression("conn.prepareStatement(INSERT_SQL)") : StaticJavaParser.parseExpression("conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)")) :
                 StaticJavaParser.parseExpression("conn.prepareStatement(INSERT_SQL)");
 
         VariableDeclarator psDeclarator = new VariableDeclarator();
@@ -344,16 +369,16 @@ public class JdbcDaoGenerator {
         tryStmt.getResources().add(new VariableDeclarationExpr(psDeclarator));
 
         tryBlock.addStatement(StaticJavaParser.parseStatement("set" + className + "Params(ps, " + paramName + ");"));
-        tryBlock.addStatement(StaticJavaParser.parseStatement("ps.executeUpdate();"));
 
-        if (pkIsAuto) {
+        if (pkIsAuto && isPostgres) {
+            // Postgres: INSERT ... RETURNING pk
             TryStmt innerTryStmt = new TryStmt();
             BlockStmt innerTryBlock = new BlockStmt();
 
             VariableDeclarator rsDeclarator = new VariableDeclarator();
             rsDeclarator.setName("rs");
             rsDeclarator.setType(new ClassOrInterfaceType(null, "ResultSet"));
-            rsDeclarator.setInitializer(StaticJavaParser.parseExpression("ps.getGeneratedKeys()"));
+            rsDeclarator.setInitializer(StaticJavaParser.parseExpression("ps.executeQuery()"));
             innerTryStmt.getResources().add(new VariableDeclarationExpr(rsDeclarator));
 
             BlockStmt ifBlock = new BlockStmt();
@@ -365,6 +390,30 @@ public class JdbcDaoGenerator {
                     StaticJavaParser.parseExpression("rs.next()"), ifBlock, null));
             innerTryStmt.setTryBlock(innerTryBlock);
             tryBlock.addStatement(innerTryStmt);
+        } else {
+            // Non-Postgres or not PK auto: standard executeUpdate with optional getGeneratedKeys
+            tryBlock.addStatement(StaticJavaParser.parseStatement("ps.executeUpdate();"));
+
+            if (pkIsAuto) {
+                TryStmt innerTryStmt = new TryStmt();
+                BlockStmt innerTryBlock = new BlockStmt();
+
+                VariableDeclarator rsDeclarator = new VariableDeclarator();
+                rsDeclarator.setName("rs");
+                rsDeclarator.setType(new ClassOrInterfaceType(null, "ResultSet"));
+                rsDeclarator.setInitializer(StaticJavaParser.parseExpression("ps.getGeneratedKeys()"));
+                innerTryStmt.getResources().add(new VariableDeclarationExpr(rsDeclarator));
+
+                BlockStmt ifBlock = new BlockStmt();
+                ifBlock.addStatement(StaticJavaParser.parseStatement("int id = rs.getInt(1);"));
+                ifBlock.addStatement(StaticJavaParser.parseStatement(
+                        paramName + ".set" + StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), true) + "(id);"));
+                ifBlock.addStatement(new ReturnStmt(new NameExpr("id")));
+                innerTryBlock.addStatement(new IfStmt(
+                        StaticJavaParser.parseExpression("rs.next()"), ifBlock, null));
+                innerTryStmt.setTryBlock(innerTryBlock);
+                tryBlock.addStatement(innerTryStmt);
+            }
         }
 
         tryStmt.setTryBlock(tryBlock);
@@ -399,7 +448,8 @@ public class JdbcDaoGenerator {
             String idType,
             List<ColumnInfo> columnsInfo,
             NamingStrategyConfig naming,
-            boolean pkIsAuto) {
+            boolean pkIsAuto,
+            String vendor) {
 
         MethodDeclaration m = daoClass.addMethod("insertAll", Modifier.Keyword.PUBLIC);
         m.setType("int[]");
@@ -424,9 +474,77 @@ public class JdbcDaoGenerator {
                         "    if (" + paramName + ".get(i) == null) throw new IllegalArgumentException(\"Null DTO at index \" + i + \" in batch insert\");\n" +
                         "}"));
 
+        boolean isPostgres = vendor != null && (vendor.contains("POSTGRES") || vendor.contains("POSTGRESQL"));
+
         TryStmt tryStmt = new TryStmt();
         BlockStmt tryBlock = new BlockStmt();
 
+        if (pkIsAuto && isPostgres) {
+            // For Postgres with RETURNING we cannot rely on executeBatch to return generated keys in the same way,
+            // so we execute per-row and collect generated keys while returning array of update counts (1 = success)
+            tryBlock.addStatement(StaticJavaParser.parseStatement("results = new int[" + paramName + ".size()];"));
+
+            VariableDeclarator psDeclarator = new VariableDeclarator();
+            psDeclarator.setName("ps");
+            psDeclarator.setType(new ClassOrInterfaceType(null, "PreparedStatement"));
+            psDeclarator.setInitializer(StaticJavaParser.parseExpression("conn.prepareStatement(INSERT_SQL)"));
+            tryStmt.getResources().add(new VariableDeclarationExpr(psDeclarator));
+
+            // Create for loop: for(int i = 0; i < paramName.size(); i++)
+            ForStmt forIdx = new ForStmt();
+
+            // Create variable declaration: int i = 0
+            VariableDeclarationExpr initExpr = new VariableDeclarationExpr(
+                    new VariableDeclarator(new PrimitiveType(PrimitiveType.Primitive.INT), "i", new IntegerLiteralExpr("0"))
+            );
+
+            // Set initialization
+            NodeList<Expression> initList = new NodeList<>();
+            initList.add(initExpr);
+            forIdx.setInitialization(initList);
+
+            // Set compare condition
+            forIdx.setCompare(StaticJavaParser.parseExpression("i < " + paramName + ".size()"));
+
+            // Set update expression (i++)
+            NodeList<Expression> updateList = new NodeList<>();
+            updateList.add(new UnaryExpr(new NameExpr("i"), UnaryExpr.Operator.POSTFIX_INCREMENT));
+            forIdx.setUpdate(updateList);
+
+            // Create for loop body
+            BlockStmt forBody = new BlockStmt();
+            forBody.addStatement(StaticJavaParser.parseStatement(modelClassName + " item = " + paramName + ".get(i);"));
+            forBody.addStatement(StaticJavaParser.parseStatement("set" + className + "Params(ps, item);"));
+
+            // Create inner try-with-resources for ResultSet
+            TryStmt innerTryStmt = new TryStmt();
+            VariableDeclarator rsDeclarator = new VariableDeclarator();
+            rsDeclarator.setName("rs");
+            rsDeclarator.setType(new ClassOrInterfaceType(null, "ResultSet"));
+            rsDeclarator.setInitializer(StaticJavaParser.parseExpression("ps.executeQuery()"));
+            innerTryStmt.getResources().add(new VariableDeclarationExpr(rsDeclarator));
+
+            BlockStmt innerTryBody = new BlockStmt();
+            BlockStmt ifBlock = new BlockStmt();
+            ifBlock.addStatement(StaticJavaParser.parseStatement("item" + pkSetter + "(rs.getInt(1));"));
+            ifBlock.addStatement(StaticJavaParser.parseStatement("results[i] = 1;"));
+
+            innerTryBody.addStatement(new IfStmt(
+                    StaticJavaParser.parseExpression("rs.next()"), ifBlock, null));
+            innerTryStmt.setTryBlock(innerTryBody);
+
+            forBody.addStatement(innerTryStmt);
+            forIdx.setBody(forBody);
+            tryBlock.addStatement(forIdx);
+
+            tryStmt.setTryBlock(tryBlock);
+            block.addStatement(tryStmt);
+            block.addStatement(new ReturnStmt(new NameExpr("results")));
+            m.setBody(block);
+            return;
+        }
+
+        // Non-PostgreSQL or non-auto-increment case
         VariableDeclarator psDeclarator = new VariableDeclarator();
         psDeclarator.setName("ps");
         psDeclarator.setType(new ClassOrInterfaceType(null, "PreparedStatement"));
@@ -557,7 +675,8 @@ public class JdbcDaoGenerator {
             String modelClassName,
             List<ColumnInfo> columnsInfo,
             String pkField,
-            NamingStrategyConfig naming) {
+            NamingStrategyConfig naming,
+            String vendor) {
 
         MethodDeclaration m = daoClass.addMethod("findAll", Modifier.Keyword.PUBLIC);
         m.setType("List<" + modelClassName + ">");
@@ -582,8 +701,14 @@ public class JdbcDaoGenerator {
         psDeclarator.setInitializer(StaticJavaParser.parseExpression("conn.prepareStatement(SELECT_ALL_SQL)"));
         tryStmt.getResources().add(new VariableDeclarationExpr(psDeclarator));
 
-        tryBlock.addStatement(StaticJavaParser.parseStatement("ps.setInt(1, pageSize);"));
-        tryBlock.addStatement(StaticJavaParser.parseStatement("ps.setInt(2, (page - 1) * pageSize);"));
+        boolean isOracle = "ORACLE".equals(vendor);
+        if (isOracle) {
+            tryBlock.addStatement(StaticJavaParser.parseStatement("ps.setInt(1, (page - 1) * pageSize);"));
+            tryBlock.addStatement(StaticJavaParser.parseStatement("ps.setInt(2, pageSize);"));
+        } else {
+            tryBlock.addStatement(StaticJavaParser.parseStatement("ps.setInt(1, pageSize);"));
+            tryBlock.addStatement(StaticJavaParser.parseStatement("ps.setInt(2, (page - 1) * pageSize);"));
+        }
 
         TryStmt innerTryStmt = new TryStmt();
         BlockStmt innerTryBlock = new BlockStmt();
@@ -701,7 +826,7 @@ public class JdbcDaoGenerator {
         String pkGetter = paramName + ".get" + StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), true) + "()";
 
         BlockStmt block = new BlockStmt();
-        block.addStatement(StaticJavaParser.parseStatement("if (" + pkGetter + " == null) throw new IllegalArgumentException(\"Primary key cannot be null for update\");"));
+        block.addStatement(StaticJavaParser.parseStatement("if (" + pkGetter + " == 0) throw new IllegalArgumentException(\"Primary key cannot be null for update\");"));
 
         TryStmt tryStmt = new TryStmt();
         BlockStmt tryBlock = new BlockStmt();
@@ -756,7 +881,7 @@ public class JdbcDaoGenerator {
         checkLoop.setIterable(new NameExpr(paramName));
         BlockStmt checkBody = new BlockStmt();
         checkBody.addStatement(new IfStmt(StaticJavaParser.parseExpression(itemVar + " == null"), new ThrowStmt(StaticJavaParser.parseExpression("new IllegalArgumentException(\"Null DTO in batch update\")")), null));
-        checkBody.addStatement(new IfStmt(StaticJavaParser.parseExpression(pkGetter + " == null"), new ThrowStmt(StaticJavaParser.parseExpression("new IllegalArgumentException(\"Null primary key in batch update\")")), null));
+        checkBody.addStatement(new IfStmt(StaticJavaParser.parseExpression(pkGetter + " == 0"), new ThrowStmt(StaticJavaParser.parseExpression("new IllegalArgumentException(\"Null primary key in batch update\")")), null));
         checkLoop.setBody(checkBody);
         block.addStatement(checkLoop);
 
@@ -1058,7 +1183,7 @@ public class JdbcDaoGenerator {
 
     /* ---------- utility methods ---------- */
 
-    private static String mapDbTypeToJava(String dbType, String columnName, int decimalDigits) {
+    private static String mapDbTypeToJava(String dbType, String columnName, int decimalDigits, int columnSize, String vendor) {
         // Handle null columnName safely
         if (columnName == null) {
             return "String";
@@ -1114,11 +1239,22 @@ public class JdbcDaoGenerator {
 
         dbType = dbType.toUpperCase();
 
+        // Vendor-specific adjustments
+        if ("ORACLE".equals(vendor) && "DATE".equals(dbType)) {
+            return "java.time.LocalDateTime";
+        }
+
         // Database type mapping - this takes precedence over column name patterns
         return switch (dbType) {
             case "SERIAL" -> "Integer";
-            case "VARCHAR", "VARCHAR2", "CHAR", "TEXT", "CLOB", "LONGTEXT", "MEDIUMTEXT" -> "String";
-            case "INT", "INTEGER", "SMALLINT", "TINYINT", "YEAR", "INT4", "INT2" -> "Integer";
+            case "VARCHAR", "VARCHAR2", "CHAR", "TEXT", "CLOB", "LONGTEXT", "MEDIUMTEXT", "NVARCHAR2", "NCLOB", "LONG" -> "String";
+            case "INT", "INTEGER", "SMALLINT", "TINYINT", "YEAR", "INT4", "INT2" -> {
+                // special-case: MySQL TINYINT(1) commonly used for boolean
+                if ("TINYINT".equals(dbType) && columnSize == 1) {
+                    yield "Boolean";
+                }
+                yield "Integer";
+            }
             case "BIGINT", "INT8" -> "Long";
             case "DECIMAL", "NUMERIC", "NUMBER" -> {
                 // Use BigDecimal for monetary values or high precision decimals
@@ -1129,7 +1265,7 @@ public class JdbcDaoGenerator {
                     yield "Long";
                 }
             }
-            case "FLOAT", "REAL" -> {
+            case "FLOAT", "REAL", "BINARY_FLOAT" -> {
                 // For monetary columns, use BigDecimal even if stored as FLOAT
                 if (colNameLower.contains("amount") || colNameLower.contains("price") ||
                         colNameLower.contains("cost") || colNameLower.contains("rate")) {
@@ -1137,7 +1273,7 @@ public class JdbcDaoGenerator {
                 }
                 yield "Float";
             }
-            case "DOUBLE", "DOUBLE PRECISION" -> {
+            case "DOUBLE", "DOUBLE PRECISION", "BINARY_DOUBLE" -> {
                 // For monetary columns, use BigDecimal even if stored as DOUBLE
                 if (colNameLower.contains("amount") || colNameLower.contains("price") ||
                         colNameLower.contains("cost") || colNameLower.contains("rate")) {
@@ -1151,7 +1287,7 @@ public class JdbcDaoGenerator {
             case "TIMESTAMP", "TIMESTAMPTZ", "DATETIME" -> "java.time.LocalDateTime";
             case "JSON", "JSONB" -> "java.util.Map<String, Object>";
             case "ARRAY" -> "java.util.List<Object>";
-            case "BLOB", "BYTEA", "BINARY", "VARBINARY" -> "byte[]";
+            case "BLOB", "BYTEA", "BINARY", "VARBINARY", "RAW" -> "byte[]";
             case "UUID" -> "java.util.UUID";
             default -> "String";
         };

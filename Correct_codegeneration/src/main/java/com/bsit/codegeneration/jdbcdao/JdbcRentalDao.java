@@ -28,8 +28,8 @@ public class JdbcRentalDao {
 
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s, %s, %s, %s, %s)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """.formatted(TABLE, COL_RENTAL_DATE, COL_INVENTORY_ID, COL_CUSTOMER_ID, COL_RETURN_DATE, COL_STAFF_ID, COL_LAST_UPDATE);
+        VALUES (?, ?, ?, ?, ?, ?) RETURNING %s
+        """.formatted(TABLE, COL_RENTAL_DATE, COL_INVENTORY_ID, COL_CUSTOMER_ID, COL_RETURN_DATE, COL_STAFF_ID, COL_LAST_UPDATE, COL_RENTAL_ID);
 
     private static final String SELECT_BY_ID_SQL = """
         SELECT * FROM %s WHERE %s = ?
@@ -62,10 +62,9 @@ public class JdbcRentalDao {
         """.formatted(TABLE, COL_RENTAL_ID);
 
     public int insert(Connection conn, Rental rental) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
             setRentalParams(ps, rental);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
+            try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     int id = rs.getInt(1);
                     rental.setRentalID(id);
@@ -84,22 +83,16 @@ public class JdbcRentalDao {
             if (rentals.get(i) == null)
                 throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-            for (Rental rental : rentals) {
-                setRentalParams(ps, rental);
-                ps.addBatch();
-            }
-            results = ps.executeBatch();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                int index = 0;
-                while (rs.next() && index < rentals.size()) {
-                    try {
-                        rentals.get(index).setRentalID(rs.getInt(1));
-                    } catch (Exception e) {
-                        // if mapping the key fails, wrap to give context
-                        throw new SQLException("Failed to set generated key for index " + index + ": " + e.getMessage(), e);
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+            results = new int[rentals.size()];
+            for (int i = 0; i < rentals.size(); i++) {
+                Rental item = rentals.get(i);
+                setRentalParams(ps, item);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        item.setRentalID(rs.getInt(1));
+                        results[i] = 1;
                     }
-                    index++;
                 }
             }
         }
@@ -134,7 +127,7 @@ public class JdbcRentalDao {
     }
 
     public boolean update(Connection conn, Rental rental) throws SQLException {
-        if (rental.getRentalID() == null)
+        if (rental.getRentalID() == 0)
             throw new IllegalArgumentException("Primary key cannot be null for update");
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
             setRentalParams(ps, rental);
@@ -149,7 +142,7 @@ public class JdbcRentalDao {
         for (Rental rental : rentals) {
             if (rental == null)
                 throw new IllegalArgumentException("Null DTO in batch update");
-            if (rental.getRentalID() == null)
+            if (rental.getRentalID() == 0)
                 throw new IllegalArgumentException("Null primary key in batch update");
         }
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {

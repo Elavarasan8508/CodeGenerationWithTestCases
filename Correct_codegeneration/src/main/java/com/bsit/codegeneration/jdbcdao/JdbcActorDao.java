@@ -22,8 +22,8 @@ public class JdbcActorDao {
 
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s, %s)
-        VALUES (?, ?, ?)
-        """.formatted(TABLE, COL_FIRST_NAME, COL_LAST_NAME, COL_LAST_UPDATE);
+        VALUES (?, ?, ?) RETURNING %s
+        """.formatted(TABLE, COL_FIRST_NAME, COL_LAST_NAME, COL_LAST_UPDATE, COL_ACTOR_ID);
 
     private static final String SELECT_BY_ID_SQL = """
         SELECT * FROM %s WHERE %s = ?
@@ -44,10 +44,9 @@ public class JdbcActorDao {
         """.formatted(TABLE, COL_ACTOR_ID);
 
     public int insert(Connection conn, Actor actor) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
             setActorParams(ps, actor);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
+            try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     int id = rs.getInt(1);
                     actor.setActorID(id);
@@ -66,22 +65,16 @@ public class JdbcActorDao {
             if (actors.get(i) == null)
                 throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-            for (Actor actor : actors) {
-                setActorParams(ps, actor);
-                ps.addBatch();
-            }
-            results = ps.executeBatch();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                int index = 0;
-                while (rs.next() && index < actors.size()) {
-                    try {
-                        actors.get(index).setActorID(rs.getInt(1));
-                    } catch (Exception e) {
-                        // if mapping the key fails, wrap to give context
-                        throw new SQLException("Failed to set generated key for index " + index + ": " + e.getMessage(), e);
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+            results = new int[actors.size()];
+            for (int i = 0; i < actors.size(); i++) {
+                Actor item = actors.get(i);
+                setActorParams(ps, item);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        item.setActorID(rs.getInt(1));
+                        results[i] = 1;
                     }
-                    index++;
                 }
             }
         }
@@ -116,7 +109,7 @@ public class JdbcActorDao {
     }
 
     public boolean update(Connection conn, Actor actor) throws SQLException {
-        if (actor.getActorID() == null)
+        if (actor.getActorID() == 0)
             throw new IllegalArgumentException("Primary key cannot be null for update");
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
             setActorParams(ps, actor);
@@ -131,7 +124,7 @@ public class JdbcActorDao {
         for (Actor actor : actors) {
             if (actor == null)
                 throw new IllegalArgumentException("Null DTO in batch update");
-            if (actor.getActorID() == null)
+            if (actor.getActorID() == 0)
                 throw new IllegalArgumentException("Null primary key in batch update");
         }
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {

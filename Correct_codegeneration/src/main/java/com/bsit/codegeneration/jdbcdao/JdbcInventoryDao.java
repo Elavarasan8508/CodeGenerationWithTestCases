@@ -22,8 +22,8 @@ public class JdbcInventoryDao {
 
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s, %s)
-        VALUES (?, ?, ?)
-        """.formatted(TABLE, COL_FILM_ID, COL_STORE_ID, COL_LAST_UPDATE);
+        VALUES (?, ?, ?) RETURNING %s
+        """.formatted(TABLE, COL_FILM_ID, COL_STORE_ID, COL_LAST_UPDATE, COL_INVENTORY_ID);
 
     private static final String SELECT_BY_ID_SQL = """
         SELECT * FROM %s WHERE %s = ?
@@ -52,10 +52,9 @@ public class JdbcInventoryDao {
         """.formatted(TABLE, COL_INVENTORY_ID);
 
     public int insert(Connection conn, Inventory inventory) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
             setInventoryParams(ps, inventory);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
+            try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     int id = rs.getInt(1);
                     inventory.setInventoryID(id);
@@ -74,22 +73,16 @@ public class JdbcInventoryDao {
             if (inventorys.get(i) == null)
                 throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-            for (Inventory inventory : inventorys) {
-                setInventoryParams(ps, inventory);
-                ps.addBatch();
-            }
-            results = ps.executeBatch();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                int index = 0;
-                while (rs.next() && index < inventorys.size()) {
-                    try {
-                        inventorys.get(index).setInventoryID(rs.getInt(1));
-                    } catch (Exception e) {
-                        // if mapping the key fails, wrap to give context
-                        throw new SQLException("Failed to set generated key for index " + index + ": " + e.getMessage(), e);
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+            results = new int[inventorys.size()];
+            for (int i = 0; i < inventorys.size(); i++) {
+                Inventory item = inventorys.get(i);
+                setInventoryParams(ps, item);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        item.setInventoryID(rs.getInt(1));
+                        results[i] = 1;
                     }
-                    index++;
                 }
             }
         }
@@ -124,7 +117,7 @@ public class JdbcInventoryDao {
     }
 
     public boolean update(Connection conn, Inventory inventory) throws SQLException {
-        if (inventory.getInventoryID() == null)
+        if (inventory.getInventoryID() == 0)
             throw new IllegalArgumentException("Primary key cannot be null for update");
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
             setInventoryParams(ps, inventory);
@@ -139,7 +132,7 @@ public class JdbcInventoryDao {
         for (Inventory inventory : inventorys) {
             if (inventory == null)
                 throw new IllegalArgumentException("Null DTO in batch update");
-            if (inventory.getInventoryID() == null)
+            if (inventory.getInventoryID() == 0)
                 throw new IllegalArgumentException("Null primary key in batch update");
         }
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {

@@ -22,8 +22,8 @@ public class JdbcCityDao {
 
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s, %s)
-        VALUES (?, ?, ?)
-        """.formatted(TABLE, COL_CITY, COL_COUNTRY_ID, COL_LAST_UPDATE);
+        VALUES (?, ?, ?) RETURNING %s
+        """.formatted(TABLE, COL_CITY, COL_COUNTRY_ID, COL_LAST_UPDATE, COL_CITY_ID);
 
     private static final String SELECT_BY_ID_SQL = """
         SELECT * FROM %s WHERE %s = ?
@@ -48,10 +48,9 @@ public class JdbcCityDao {
         """.formatted(TABLE, COL_CITY_ID);
 
     public int insert(Connection conn, City city) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
             setCityParams(ps, city);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
+            try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     int id = rs.getInt(1);
                     city.setCityID(id);
@@ -70,22 +69,16 @@ public class JdbcCityDao {
             if (citys.get(i) == null)
                 throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-            for (City city : citys) {
-                setCityParams(ps, city);
-                ps.addBatch();
-            }
-            results = ps.executeBatch();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                int index = 0;
-                while (rs.next() && index < citys.size()) {
-                    try {
-                        citys.get(index).setCityID(rs.getInt(1));
-                    } catch (Exception e) {
-                        // if mapping the key fails, wrap to give context
-                        throw new SQLException("Failed to set generated key for index " + index + ": " + e.getMessage(), e);
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+            results = new int[citys.size()];
+            for (int i = 0; i < citys.size(); i++) {
+                City item = citys.get(i);
+                setCityParams(ps, item);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        item.setCityID(rs.getInt(1));
+                        results[i] = 1;
                     }
-                    index++;
                 }
             }
         }
@@ -120,7 +113,7 @@ public class JdbcCityDao {
     }
 
     public boolean update(Connection conn, City city) throws SQLException {
-        if (city.getCityID() == null)
+        if (city.getCityID() == 0)
             throw new IllegalArgumentException("Primary key cannot be null for update");
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
             setCityParams(ps, city);
@@ -135,7 +128,7 @@ public class JdbcCityDao {
         for (City city : citys) {
             if (city == null)
                 throw new IllegalArgumentException("Null DTO in batch update");
-            if (city.getCityID() == null)
+            if (city.getCityID() == 0)
                 throw new IllegalArgumentException("Null primary key in batch update");
         }
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {

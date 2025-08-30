@@ -28,8 +28,8 @@ public class JdbcPaymentDao {
 
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s, %s, %s, %s, %s)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """.formatted(TABLE, COL_CUSTOMER_ID, COL_STAFF_ID, COL_RENTAL_ID, COL_AMOUNT, COL_PAYMENT_DATE, COL_LAST_UPDATE);
+        VALUES (?, ?, ?, ?, ?, ?) RETURNING %s
+        """.formatted(TABLE, COL_CUSTOMER_ID, COL_STAFF_ID, COL_RENTAL_ID, COL_AMOUNT, COL_PAYMENT_DATE, COL_LAST_UPDATE, COL_PAYMENT_ID);
 
     private static final String SELECT_BY_ID_SQL = """
         SELECT * FROM %s WHERE %s = ?
@@ -62,10 +62,9 @@ public class JdbcPaymentDao {
         """.formatted(TABLE, COL_PAYMENT_ID);
 
     public int insert(Connection conn, Payment payment) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
             setPaymentParams(ps, payment);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
+            try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     int id = rs.getInt(1);
                     payment.setPaymentID(id);
@@ -84,22 +83,16 @@ public class JdbcPaymentDao {
             if (payments.get(i) == null)
                 throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-            for (Payment payment : payments) {
-                setPaymentParams(ps, payment);
-                ps.addBatch();
-            }
-            results = ps.executeBatch();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                int index = 0;
-                while (rs.next() && index < payments.size()) {
-                    try {
-                        payments.get(index).setPaymentID(rs.getInt(1));
-                    } catch (Exception e) {
-                        // if mapping the key fails, wrap to give context
-                        throw new SQLException("Failed to set generated key for index " + index + ": " + e.getMessage(), e);
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+            results = new int[payments.size()];
+            for (int i = 0; i < payments.size(); i++) {
+                Payment item = payments.get(i);
+                setPaymentParams(ps, item);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        item.setPaymentID(rs.getInt(1));
+                        results[i] = 1;
                     }
-                    index++;
                 }
             }
         }
@@ -134,7 +127,7 @@ public class JdbcPaymentDao {
     }
 
     public boolean update(Connection conn, Payment payment) throws SQLException {
-        if (payment.getPaymentID() == null)
+        if (payment.getPaymentID() == 0)
             throw new IllegalArgumentException("Primary key cannot be null for update");
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
             setPaymentParams(ps, payment);
@@ -149,7 +142,7 @@ public class JdbcPaymentDao {
         for (Payment payment : payments) {
             if (payment == null)
                 throw new IllegalArgumentException("Null DTO in batch update");
-            if (payment.getPaymentID() == null)
+            if (payment.getPaymentID() == 0)
                 throw new IllegalArgumentException("Null primary key in batch update");
         }
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {

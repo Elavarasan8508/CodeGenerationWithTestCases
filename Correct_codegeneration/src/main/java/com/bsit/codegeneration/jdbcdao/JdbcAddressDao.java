@@ -30,8 +30,8 @@ public class JdbcAddressDao {
 
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s, %s, %s, %s, %s, %s)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """.formatted(TABLE, COL_ADDRESS, COL_ADDRESS2, COL_DISTRICT, COL_CITY_ID, COL_POSTAL_CODE, COL_PHONE, COL_LAST_UPDATE);
+        VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING %s
+        """.formatted(TABLE, COL_ADDRESS, COL_ADDRESS2, COL_DISTRICT, COL_CITY_ID, COL_POSTAL_CODE, COL_PHONE, COL_LAST_UPDATE, COL_ADDRESS_ID);
 
     private static final String SELECT_BY_ID_SQL = """
         SELECT * FROM %s WHERE %s = ?
@@ -56,10 +56,9 @@ public class JdbcAddressDao {
         """.formatted(TABLE, COL_ADDRESS_ID);
 
     public int insert(Connection conn, Address address) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
             setAddressParams(ps, address);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
+            try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     int id = rs.getInt(1);
                     address.setAddressID(id);
@@ -78,22 +77,16 @@ public class JdbcAddressDao {
             if (addresss.get(i) == null)
                 throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-            for (Address address : addresss) {
-                setAddressParams(ps, address);
-                ps.addBatch();
-            }
-            results = ps.executeBatch();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                int index = 0;
-                while (rs.next() && index < addresss.size()) {
-                    try {
-                        addresss.get(index).setAddressID(rs.getInt(1));
-                    } catch (Exception e) {
-                        // if mapping the key fails, wrap to give context
-                        throw new SQLException("Failed to set generated key for index " + index + ": " + e.getMessage(), e);
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+            results = new int[addresss.size()];
+            for (int i = 0; i < addresss.size(); i++) {
+                Address item = addresss.get(i);
+                setAddressParams(ps, item);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        item.setAddressID(rs.getInt(1));
+                        results[i] = 1;
                     }
-                    index++;
                 }
             }
         }
@@ -128,7 +121,7 @@ public class JdbcAddressDao {
     }
 
     public boolean update(Connection conn, Address address) throws SQLException {
-        if (address.getAddressID() == null)
+        if (address.getAddressID() == 0)
             throw new IllegalArgumentException("Primary key cannot be null for update");
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
             setAddressParams(ps, address);
@@ -143,7 +136,7 @@ public class JdbcAddressDao {
         for (Address address : addresss) {
             if (address == null)
                 throw new IllegalArgumentException("Null DTO in batch update");
-            if (address.getAddressID() == null)
+            if (address.getAddressID() == 0)
                 throw new IllegalArgumentException("Null primary key in batch update");
         }
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {

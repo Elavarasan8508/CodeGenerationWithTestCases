@@ -31,7 +31,7 @@ public class Staff {
 
     private java.time.LocalDateTime lastUpdate;
 
-    private byte[] picture;
+    private String picture;
 
     private List<Payment> paymentList;
 
@@ -42,7 +42,7 @@ public class Staff {
     public Staff() {
     }
 
-    public Staff(Address address, Store store, Store managerStaff, Integer staffID, String firstName, String lastName, Integer addressID, String email, Integer storeID, Boolean active, String username, String password, java.time.LocalDateTime lastUpdate, byte[] picture) {
+    public Staff(Address address, Store store, Store managerStaff, Integer staffID, String firstName, String lastName, Integer addressID, String email, Integer storeID, Boolean active, String username, String password, java.time.LocalDateTime lastUpdate, String picture) {
         this.address = address;
         this.store = store;
         this.managerStaff = managerStaff;
@@ -163,11 +163,11 @@ public class Staff {
         this.lastUpdate = lastUpdate;
     }
 
-    public byte[] getPicture() {
+    public String getPicture() {
         return picture;
     }
 
-    public void setPicture(byte[] picture) {
+    public void setPicture(String picture) {
         this.picture = picture;
     }
 
@@ -264,7 +264,7 @@ public class Staff {
             return this;
         }
 
-        public Builder picture(byte[] picture) {
+        public Builder picture(String picture) {
             instance.setPicture(picture);
             return this;
         }

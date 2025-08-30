@@ -20,8 +20,8 @@ public class JdbcLanguageDao {
 
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s)
-        VALUES (?, ?)
-        """.formatted(TABLE, COL_NAME, COL_LAST_UPDATE);
+        VALUES (?, ?) RETURNING %s
+        """.formatted(TABLE, COL_NAME, COL_LAST_UPDATE, COL_LANGUAGE_ID);
 
     private static final String SELECT_BY_ID_SQL = """
         SELECT * FROM %s WHERE %s = ?
@@ -42,10 +42,9 @@ public class JdbcLanguageDao {
         """.formatted(TABLE, COL_LANGUAGE_ID);
 
     public int insert(Connection conn, Language language) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
             setLanguageParams(ps, language);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
+            try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     int id = rs.getInt(1);
                     language.setLanguageID(id);
@@ -64,22 +63,16 @@ public class JdbcLanguageDao {
             if (languages.get(i) == null)
                 throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
-        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-            for (Language language : languages) {
-                setLanguageParams(ps, language);
-                ps.addBatch();
-            }
-            results = ps.executeBatch();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                int index = 0;
-                while (rs.next() && index < languages.size()) {
-                    try {
-                        languages.get(index).setLanguageID(rs.getInt(1));
-                    } catch (Exception e) {
-                        // if mapping the key fails, wrap to give context
-                        throw new SQLException("Failed to set generated key for index " + index + ": " + e.getMessage(), e);
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+            results = new int[languages.size()];
+            for (int i = 0; i < languages.size(); i++) {
+                Language item = languages.get(i);
+                setLanguageParams(ps, item);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        item.setLanguageID(rs.getInt(1));
+                        results[i] = 1;
                     }
-                    index++;
                 }
             }
         }
@@ -114,7 +107,7 @@ public class JdbcLanguageDao {
     }
 
     public boolean update(Connection conn, Language language) throws SQLException {
-        if (language.getLanguageID() == null)
+        if (language.getLanguageID() == 0)
             throw new IllegalArgumentException("Primary key cannot be null for update");
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
             setLanguageParams(ps, language);
@@ -129,7 +122,7 @@ public class JdbcLanguageDao {
         for (Language language : languages) {
             if (language == null)
                 throw new IllegalArgumentException("Null DTO in batch update");
-            if (language.getLanguageID() == null)
+            if (language.getLanguageID() == 0)
                 throw new IllegalArgumentException("Null primary key in batch update");
         }
         try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
