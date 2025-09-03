@@ -13,6 +13,7 @@ import com.github.javaparser.ast.expr.*;
 import com.github.javaparser.ast.stmt.*;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.ast.type.PrimitiveType;
+import com.github.javaparser.ast.type.TypeParameter;
 
 import java.io.IOException;
 import java.nio.file.*;
@@ -62,7 +63,7 @@ public class JdbcDaoGenerator {
         String rawClassName = StringUtils.stripPrefix(tableName, naming.getStripPrefixes());
         String className = StringUtils.toCamelCase(rawClassName, naming.getUppercaseAcronyms(), true);
         String modelClassName = className;
-        String daoClassName = "Jdbc"+className + "Dao";
+        String daoClassName = "Jdbc" + className + "Dao";
         String packageName = "com.bsit.codegeneration.jdbcdao";
 
         // Collect column information
@@ -113,7 +114,6 @@ public class JdbcDaoGenerator {
                 colInfo.isForeignKey = true;
                 colInfo.referencedTable = foreignKeyMap.get(colName);
             }
-
             columnsInfo.add(colInfo);
 
             if (pkField == null && colName.equalsIgnoreCase("id")) {
@@ -126,7 +126,6 @@ public class JdbcDaoGenerator {
                 pkIsAuto = isAutoIncrement;
             }
         }
-
         if (pkField == null && !columnsInfo.isEmpty()) {
             pkField = columnsInfo.get(0).name;
             idType = columnsInfo.get(0).javaType;
@@ -148,14 +147,31 @@ public class JdbcDaoGenerator {
         cu.addImport("java.util.List");
         cu.addImport("java.util.Objects");
         cu.addImport("java.time.LocalDateTime");
-        cu.addImport("java.math.BigDecimal");
-        cu.addImport(target.getBasePackage()+".pojo.*");
+        cu.addImport(target.getBasePackage() + ".pojo.*");
+        cu.addImport("org.slf4j.Logger");
+        cu.addImport("org.slf4j.LoggerFactory");
+        cu.addImport("java.util.Collections");
+        cu.addImport("java.util.stream.Collectors");
+
+        // Conditional import for BigDecimal
+        boolean usesBigDecimal = columnsInfo.stream().anyMatch(c -> "java.math.BigDecimal".equals(c.javaType));
+        if (usesBigDecimal) {
+            cu.addImport("java.math.BigDecimal");
+        }
 
         // class
         ClassOrInterfaceDeclaration daoClass = cu.addClass(daoClassName, Modifier.Keyword.PUBLIC);
 
+        // Add logger
+        daoClass.addFieldWithInitializer("Logger", "logger",
+                StaticJavaParser.parseExpression("LoggerFactory.getLogger(" + daoClassName + ".class)"),
+                Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
+
         // Create constants (vendor-aware)
         createConstants(daoClass, tableName, columnsInfo, pkField, pkIsAuto, relationships, naming, vendor);
+
+        // Add utility methods for generalization
+        createUtilityMethods(daoClass);
 
         // Create methods (pass vendor where needed)
         createInsertMethod(daoClass, tableName, modelClassName, pkField, idType, columnsInfo, naming, pkIsAuto, vendor);
@@ -203,28 +219,23 @@ public class JdbcDaoGenerator {
                     Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
         }
 
-        // INSERT_SQL
+        // Compute select columns
+        String selectColumns = columnsInfo.stream()
+                .map(c -> c.name)
+                .collect(Collectors.joining(", "));
+
+        // INSERT_SQL (no RETURNING)
         List<ColumnInfo> insertCols = columnsInfo.stream()
                 .filter(c -> !(pkIsAuto && c.name.equals(pkField)))
                 .collect(Collectors.toList());
-
-        String insertColumns = insertCols.stream()
+        String insertColumnsStr = insertCols.stream()
                 .map(c -> "%s")
                 .collect(Collectors.joining(", "));
         String insertPlaceholders = insertCols.stream().map(c -> "?").collect(Collectors.joining(", "));
-
         StringBuilder insertSqlBuilder = new StringBuilder();
         insertSqlBuilder.append("\"\"\"\n");
-        insertSqlBuilder.append("        INSERT INTO %s (").append(insertColumns).append(")\n");
-        insertSqlBuilder.append("        VALUES (").append(insertPlaceholders).append(")");
-
-        // Postgres: append RETURNING clause if PK is auto
-        boolean isPostgres = vendor != null && (vendor.contains("POSTGRES") || vendor.contains("POSTGRESQL"));
-        if (pkIsAuto && isPostgres) {
-            insertSqlBuilder.append(" RETURNING %s\n");
-        } else {
-            insertSqlBuilder.append("\n");
-        }
+        insertSqlBuilder.append("        INSERT INTO %s (").append(insertColumnsStr).append(")\n");
+        insertSqlBuilder.append("        VALUES (").append(insertPlaceholders).append(")\n");
         insertSqlBuilder.append("        \"\"\"");
 
         MethodCallExpr insertSqlExpr = new MethodCallExpr(
@@ -233,9 +244,6 @@ public class JdbcDaoGenerator {
         for (ColumnInfo c : insertCols) {
             insertSqlExpr.addArgument(new NameExpr("COL_" + c.name.toUpperCase()));
         }
-        if (pkIsAuto && isPostgres) {
-            insertSqlExpr.addArgument(new NameExpr("COL_" + pkField.toUpperCase()));
-        }
 
         daoClass.addFieldWithInitializer("String", "INSERT_SQL", insertSqlExpr,
                 Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
@@ -243,30 +251,32 @@ public class JdbcDaoGenerator {
         // SELECT_BY_ID_SQL
         StringBuilder selectByIdBuilder = new StringBuilder();
         selectByIdBuilder.append("\"\"\"\n");
-        selectByIdBuilder.append("        SELECT * FROM %s WHERE %s = ?\n");
+        selectByIdBuilder.append("        SELECT %s FROM %s WHERE %s = ?\n");
         selectByIdBuilder.append("        \"\"\"");
 
         MethodCallExpr selectByIdSqlExpr = new MethodCallExpr(
                 StaticJavaParser.parseExpression(selectByIdBuilder.toString()), "formatted");
+        selectByIdSqlExpr.addArgument(new StringLiteralExpr(selectColumns));
         selectByIdSqlExpr.addArgument(new NameExpr("TABLE"));
         selectByIdSqlExpr.addArgument(new NameExpr("COL_" + pkField.toUpperCase()));
 
         daoClass.addFieldWithInitializer("String", "SELECT_BY_ID_SQL", selectByIdSqlExpr,
                 Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
 
-        // SELECT_ALL_SQL with LIMIT and OFFSET for pagination
-        String selectAllFormat;
-        if ("ORACLE".equals(vendor)) {
-            selectAllFormat = "\"\"\"\n        SELECT * FROM %s ORDER BY %s OFFSET ? ROWS FETCH NEXT ? ROWS ONLY\n        \"\"\"";
-        } else {
-            selectAllFormat = "\"\"\"\n        SELECT * FROM %s ORDER BY %s LIMIT ? OFFSET ?\n        \"\"\"";
-        }
-        MethodCallExpr selectAllSqlExpr = new MethodCallExpr(
-                StaticJavaParser.parseExpression(selectAllFormat), "formatted");
-        selectAllSqlExpr.addArgument(new NameExpr("TABLE"));
-        selectAllSqlExpr.addArgument(new NameExpr("COL_" + pkField.toUpperCase()));
+        // SELECT_ALL_SQL - now dynamic in method, so no constant needed for pagination
+        // But for consistency, add a base SELECT_ALL_BASE
+        StringBuilder selectAllBaseBuilder = new StringBuilder();
+        selectAllBaseBuilder.append("\"\"\"\n");
+        selectAllBaseBuilder.append("        SELECT %s FROM %s ORDER BY %s\n");
+        selectAllBaseBuilder.append("        \"\"\"");
 
-        daoClass.addFieldWithInitializer("String", "SELECT_ALL_SQL", selectAllSqlExpr,
+        MethodCallExpr selectAllBaseExpr = new MethodCallExpr(
+                StaticJavaParser.parseExpression(selectAllBaseBuilder.toString()), "formatted");
+        selectAllBaseExpr.addArgument(new StringLiteralExpr(selectColumns));
+        selectAllBaseExpr.addArgument(new NameExpr("TABLE"));
+        selectAllBaseExpr.addArgument(new NameExpr("COL_" + pkField.toUpperCase()));
+
+        daoClass.addFieldWithInitializer("String", "SELECT_ALL_BASE", selectAllBaseExpr,
                 Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
 
         // CREATE FK SELECT SQL constants
@@ -278,11 +288,12 @@ public class JdbcDaoGenerator {
 
                     StringBuilder fkBuilder = new StringBuilder();
                     fkBuilder.append("\"\"\"\n");
-                    fkBuilder.append("        SELECT * FROM %s WHERE %s = ?\n");
+                    fkBuilder.append("        SELECT %s FROM %s WHERE %s = ?\n");
                     fkBuilder.append("        \"\"\"");
 
                     MethodCallExpr fkSqlExpr = new MethodCallExpr(
                             StaticJavaParser.parseExpression(fkBuilder.toString()), "formatted");
+                    fkSqlExpr.addArgument(new StringLiteralExpr(selectColumns));
                     fkSqlExpr.addArgument(new NameExpr("TABLE"));
                     fkSqlExpr.addArgument(new NameExpr("COL_" + fkColumn.toUpperCase()));
 
@@ -305,7 +316,6 @@ public class JdbcDaoGenerator {
         updateBuilder.append("        SET ").append(setClause).append("\n");
         updateBuilder.append("        WHERE %s = ?\n");
         updateBuilder.append("        \"\"\"");
-
         MethodCallExpr updateSqlExpr = new MethodCallExpr(
                 StaticJavaParser.parseExpression(updateBuilder.toString()), "formatted");
         updateSqlExpr.addArgument(new NameExpr("TABLE"));
@@ -313,7 +323,6 @@ public class JdbcDaoGenerator {
             updateSqlExpr.addArgument(new NameExpr("COL_" + c.name.toUpperCase()));
         }
         updateSqlExpr.addArgument(new NameExpr("COL_" + pkField.toUpperCase()));
-
         daoClass.addFieldWithInitializer("String", "UPDATE_SQL", updateSqlExpr,
                 Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
 
@@ -332,6 +341,55 @@ public class JdbcDaoGenerator {
                 Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC, Modifier.Keyword.FINAL);
     }
 
+    private static void createUtilityMethods(ClassOrInterfaceDeclaration daoClass) {
+        // Utility to get DB vendor
+        MethodDeclaration getDbVendor = daoClass.addMethod("getDbVendor", Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC);
+        getDbVendor.setType("String");
+        getDbVendor.addParameter("Connection", "conn");
+        getDbVendor.addThrownException(new ClassOrInterfaceType(null, "SQLException"));
+        BlockStmt vendorBlock = new BlockStmt();
+        vendorBlock.addStatement(StaticJavaParser.parseStatement("String dbName = conn.getMetaData().getDatabaseProductName().toLowerCase();"));
+        IfStmt ifOracle = new IfStmt(
+                StaticJavaParser.parseExpression("dbName.contains(\"oracle\")"),
+                StaticJavaParser.parseStatement("return \"oracle\";"),
+                null
+        );
+        vendorBlock.addStatement(ifOracle);
+        IfStmt ifPostgres = new IfStmt(
+                StaticJavaParser.parseExpression("dbName.contains(\"postgres\")"),
+                StaticJavaParser.parseStatement("return \"postgres\";"),
+                null
+        );
+        vendorBlock.addStatement(ifPostgres);
+        vendorBlock.addStatement(StaticJavaParser.parseStatement("return \"other\";"));
+        getDbVendor.setBody(vendorBlock);
+
+        // Utility to chunk lists (for IN clauses and batches)
+        MethodDeclaration chunkList = daoClass.addMethod("chunkList", Modifier.Keyword.PRIVATE, Modifier.Keyword.STATIC);
+        chunkList.addTypeParameter(new TypeParameter("T"));
+        chunkList.setType("List<List<T>>");
+        chunkList.addParameter("List<T>", "list");
+        chunkList.addParameter("int", "chunkSize");
+        BlockStmt chunkBlock = new BlockStmt();
+        chunkBlock.addStatement(StaticJavaParser.parseStatement("List<List<T>> chunks = new ArrayList<>();"));
+
+        ForStmt forStmt = new ForStmt();
+        NodeList<Expression> initialization = new NodeList<>();
+        initialization.add(StaticJavaParser.parseStatement("int i = 0;").asExpressionStmt().getExpression());
+        forStmt.setInitialization(initialization);
+        forStmt.setCompare(StaticJavaParser.parseExpression("i < list.size()"));
+        NodeList<Expression> update = new NodeList<>();
+        update.add(StaticJavaParser.parseExpression("i += chunkSize"));
+        forStmt.setUpdate(update);
+        BlockStmt forBody = new BlockStmt();
+        forBody.addStatement(StaticJavaParser.parseStatement("chunks.add(list.subList(i, Math.min(i + chunkSize, list.size())));"));
+        forStmt.setBody(forBody);
+        chunkBlock.addStatement(forStmt);
+
+        chunkBlock.addStatement(StaticJavaParser.parseStatement("return chunks;"));
+        chunkList.setBody(chunkBlock);
+    }
+
     private static void createInsertMethod(
             ClassOrInterfaceDeclaration daoClass,
             String tableName,
@@ -344,7 +402,7 @@ public class JdbcDaoGenerator {
             String vendor) {
 
         MethodDeclaration m = daoClass.addMethod("insert", Modifier.Keyword.PUBLIC);
-        m.setType("int");
+        m.setType(mapJavaTypeToMethod(idType));
         m.addParameter("Connection", "conn");
         m.addParameter(modelClassName, StringUtils.toCamelCase(modelClassName, naming.getUppercaseAcronyms(), false));
         m.addThrownException(new ClassOrInterfaceType(null, "SQLException"));
@@ -353,13 +411,12 @@ public class JdbcDaoGenerator {
         String className = modelClassName;
 
         BlockStmt block = new BlockStmt();
+        block.addStatement(StaticJavaParser.parseStatement("logger.debug(\"Inserting " + modelClassName.toLowerCase() + ": {}\", " + paramName + ");"));
         TryStmt tryStmt = new TryStmt();
         BlockStmt tryBlock = new BlockStmt();
 
-        boolean isPostgres = vendor != null && (vendor.contains("POSTGRES") || vendor.contains("POSTGRESQL"));
-
         Expression psInitializer = pkIsAuto ?
-                (isPostgres ? StaticJavaParser.parseExpression("conn.prepareStatement(INSERT_SQL)") : StaticJavaParser.parseExpression("conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)")) :
+                StaticJavaParser.parseExpression("conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)") :
                 StaticJavaParser.parseExpression("conn.prepareStatement(INSERT_SQL)");
 
         VariableDeclarator psDeclarator = new VariableDeclarator();
@@ -370,73 +427,38 @@ public class JdbcDaoGenerator {
 
         tryBlock.addStatement(StaticJavaParser.parseStatement("set" + className + "Params(ps, " + paramName + ");"));
 
-        if (pkIsAuto && isPostgres) {
-            // Postgres: INSERT ... RETURNING pk
+        tryBlock.addStatement(StaticJavaParser.parseStatement("ps.executeUpdate();"));
+
+        if (pkIsAuto) {
             TryStmt innerTryStmt = new TryStmt();
             BlockStmt innerTryBlock = new BlockStmt();
 
             VariableDeclarator rsDeclarator = new VariableDeclarator();
             rsDeclarator.setName("rs");
             rsDeclarator.setType(new ClassOrInterfaceType(null, "ResultSet"));
-            rsDeclarator.setInitializer(StaticJavaParser.parseExpression("ps.executeQuery()"));
+            rsDeclarator.setInitializer(StaticJavaParser.parseExpression("ps.getGeneratedKeys()"));
             innerTryStmt.getResources().add(new VariableDeclarationExpr(rsDeclarator));
 
             BlockStmt ifBlock = new BlockStmt();
-            ifBlock.addStatement(StaticJavaParser.parseStatement("int id = rs.getInt(1);"));
+            ifBlock.addStatement(StaticJavaParser.parseStatement(idType + " id = rs." + getResultSetGetter(idType) + "(1);"));
             ifBlock.addStatement(StaticJavaParser.parseStatement(
                     paramName + ".set" + StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), true) + "(id);"));
             ifBlock.addStatement(new ReturnStmt(new NameExpr("id")));
+
+            BlockStmt elseBlock = new BlockStmt();
+            elseBlock.addStatement(StaticJavaParser.parseStatement("logger.error(\"Failed to retrieve generated ID for inserted " + modelClassName.toLowerCase() + "\");"));
+            elseBlock.addStatement(new ThrowStmt(StaticJavaParser.parseExpression("new SQLException(\"Failed to retrieve generated ID for inserted " + modelClassName.toLowerCase() + "\")")));
+
             innerTryBlock.addStatement(new IfStmt(
-                    StaticJavaParser.parseExpression("rs.next()"), ifBlock, null));
+                    StaticJavaParser.parseExpression("rs.next()"), ifBlock, elseBlock));
             innerTryStmt.setTryBlock(innerTryBlock);
             tryBlock.addStatement(innerTryStmt);
         } else {
-            // Non-Postgres or not PK auto: standard executeUpdate with optional getGeneratedKeys
-            tryBlock.addStatement(StaticJavaParser.parseStatement("ps.executeUpdate();"));
-
-            if (pkIsAuto) {
-                TryStmt innerTryStmt = new TryStmt();
-                BlockStmt innerTryBlock = new BlockStmt();
-
-                VariableDeclarator rsDeclarator = new VariableDeclarator();
-                rsDeclarator.setName("rs");
-                rsDeclarator.setType(new ClassOrInterfaceType(null, "ResultSet"));
-                rsDeclarator.setInitializer(StaticJavaParser.parseExpression("ps.getGeneratedKeys()"));
-                innerTryStmt.getResources().add(new VariableDeclarationExpr(rsDeclarator));
-
-                BlockStmt ifBlock = new BlockStmt();
-                ifBlock.addStatement(StaticJavaParser.parseStatement("int id = rs.getInt(1);"));
-                ifBlock.addStatement(StaticJavaParser.parseStatement(
-                        paramName + ".set" + StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), true) + "(id);"));
-                ifBlock.addStatement(new ReturnStmt(new NameExpr("id")));
-                innerTryBlock.addStatement(new IfStmt(
-                        StaticJavaParser.parseExpression("rs.next()"), ifBlock, null));
-                innerTryStmt.setTryBlock(innerTryBlock);
-                tryBlock.addStatement(innerTryStmt);
-            }
+            tryBlock.addStatement(new ReturnStmt(StaticJavaParser.parseExpression(paramName + ".get" + StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), true) + "()")));
         }
 
         tryStmt.setTryBlock(tryBlock);
         block.addStatement(tryStmt);
-
-        if (pkIsAuto) {
-            block.addStatement(new ReturnStmt(new NameExpr("-1")));
-        } else {
-            ColumnInfo pkCol = columnsInfo.stream().filter(c -> c.name.equals(pkField)).findFirst().orElse(null);
-            String returnExpr;
-            if (pkCol != null && pkCol.isForeignKey) {
-                String baseName = pkField.toLowerCase().endsWith("_id") ? pkField.substring(0, pkField.length() - 3) : pkField;
-                String relName = StringUtils.toCamelCase(baseName, naming.getUppercaseAcronyms(), true);
-                String relGetter = paramName + ".get" + relName + "()";
-                String relPk = pkCol.referencedTable + "_id";
-                String relPkCamel = StringUtils.toCamelCase(relPk, naming.getUppercaseAcronyms(), true);
-                returnExpr = relGetter + ".get" + relPkCamel + "()";
-            } else {
-                String pkCamel = StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), true);
-                returnExpr = paramName + ".get" + pkCamel + "()";
-            }
-            block.addStatement(new ReturnStmt(StaticJavaParser.parseExpression(returnExpr)));
-        }
 
         m.setBody(block);
     }
@@ -465,124 +487,75 @@ public class JdbcDaoGenerator {
         BlockStmt block = new BlockStmt();
         block.addStatement(StaticJavaParser.parseStatement("if (" + paramName + " == null || " + paramName + ".isEmpty()) return new int[0];"));
 
-        // results declared before try (in scope for return)
-        block.addStatement(StaticJavaParser.parseStatement("int[] results = new int[0];"));
+        // Null-check with index
+        ForStmt nullCheckFor = new ForStmt();
+        NodeList<Expression> nullInit = new NodeList<>();
+        nullInit.add(StaticJavaParser.parseStatement("int i = 0;").asExpressionStmt().getExpression());
+        nullCheckFor.setInitialization(nullInit);
+        nullCheckFor.setCompare(StaticJavaParser.parseExpression("i < " + paramName + ".size()"));
+        NodeList<Expression> nullUpdate = new NodeList<>();
+        nullUpdate.add(StaticJavaParser.parseExpression("i++"));
+        nullCheckFor.setUpdate(nullUpdate);
+        BlockStmt nullBody = new BlockStmt();
+        nullBody.addStatement(new IfStmt(
+                StaticJavaParser.parseExpression(paramName + ".get(i) == null"),
+                new ThrowStmt(StaticJavaParser.parseExpression("new IllegalArgumentException(\"Null DTO at index \" + i + \" in batch insert\")")),
+                null
+        ));
+        nullCheckFor.setBody(nullBody);
+        block.addStatement(nullCheckFor);
 
-        // Null-check with index (so we can show which index caused the problem)
-        block.addStatement(StaticJavaParser.parseStatement(
-                "for (int i = 0; i < " + paramName + ".size(); i++) {\n" +
-                        "    if (" + paramName + ".get(i) == null) throw new IllegalArgumentException(\"Null DTO at index \" + i + \" in batch insert\");\n" +
-                        "}"));
+        block.addStatement(StaticJavaParser.parseStatement("String dbVendor = getDbVendor(conn);"));
+        block.addStatement(StaticJavaParser.parseStatement("boolean isOracle = \"oracle\".equals(dbVendor);"));
+        block.addStatement(StaticJavaParser.parseStatement("int batchSize = isOracle ? 500 : 1000;")); // Smaller for Oracle
+        block.addStatement(StaticJavaParser.parseStatement("List<List<" + modelClassName + ">> batches = chunkList(" + paramName + ", batchSize);"));
+        block.addStatement(StaticJavaParser.parseStatement("int[] totalResults = new int[" + paramName + ".size()];"));
+        block.addStatement(StaticJavaParser.parseStatement("int resultIndex = 0;"));
 
-        boolean isPostgres = vendor != null && (vendor.contains("POSTGRES") || vendor.contains("POSTGRESQL"));
+        block.addStatement(StaticJavaParser.parseStatement("boolean autoCommit = conn.getAutoCommit();"));
+        block.addStatement(StaticJavaParser.parseStatement("conn.setAutoCommit(false);"));
+
+        TryStmt outerTry = new TryStmt();
+        BlockStmt outerTryBlock = new BlockStmt();
+
+        ForEachStmt batchLoop = new ForEachStmt();
+        batchLoop.setVariable(new VariableDeclarationExpr(new ClassOrInterfaceType(null, "List<" + modelClassName + ">"), "batch"));
+        batchLoop.setIterable(new NameExpr("batches"));
+        BlockStmt batchBody = new BlockStmt();
 
         TryStmt tryStmt = new TryStmt();
         BlockStmt tryBlock = new BlockStmt();
 
-        if (pkIsAuto && isPostgres) {
-            // For Postgres with RETURNING we cannot rely on executeBatch to return generated keys in the same way,
-            // so we execute per-row and collect generated keys while returning array of update counts (1 = success)
-            tryBlock.addStatement(StaticJavaParser.parseStatement("results = new int[" + paramName + ".size()];"));
-
-            VariableDeclarator psDeclarator = new VariableDeclarator();
-            psDeclarator.setName("ps");
-            psDeclarator.setType(new ClassOrInterfaceType(null, "PreparedStatement"));
-            psDeclarator.setInitializer(StaticJavaParser.parseExpression("conn.prepareStatement(INSERT_SQL)"));
-            tryStmt.getResources().add(new VariableDeclarationExpr(psDeclarator));
-
-            // Create for loop: for(int i = 0; i < paramName.size(); i++)
-            ForStmt forIdx = new ForStmt();
-
-            // Create variable declaration: int i = 0
-            VariableDeclarationExpr initExpr = new VariableDeclarationExpr(
-                    new VariableDeclarator(new PrimitiveType(PrimitiveType.Primitive.INT), "i", new IntegerLiteralExpr("0"))
-            );
-
-            // Set initialization
-            NodeList<Expression> initList = new NodeList<>();
-            initList.add(initExpr);
-            forIdx.setInitialization(initList);
-
-            // Set compare condition
-            forIdx.setCompare(StaticJavaParser.parseExpression("i < " + paramName + ".size()"));
-
-            // Set update expression (i++)
-            NodeList<Expression> updateList = new NodeList<>();
-            updateList.add(new UnaryExpr(new NameExpr("i"), UnaryExpr.Operator.POSTFIX_INCREMENT));
-            forIdx.setUpdate(updateList);
-
-            // Create for loop body
-            BlockStmt forBody = new BlockStmt();
-            forBody.addStatement(StaticJavaParser.parseStatement(modelClassName + " item = " + paramName + ".get(i);"));
-            forBody.addStatement(StaticJavaParser.parseStatement("set" + className + "Params(ps, item);"));
-
-            // Create inner try-with-resources for ResultSet
-            TryStmt innerTryStmt = new TryStmt();
-            VariableDeclarator rsDeclarator = new VariableDeclarator();
-            rsDeclarator.setName("rs");
-            rsDeclarator.setType(new ClassOrInterfaceType(null, "ResultSet"));
-            rsDeclarator.setInitializer(StaticJavaParser.parseExpression("ps.executeQuery()"));
-            innerTryStmt.getResources().add(new VariableDeclarationExpr(rsDeclarator));
-
-            BlockStmt innerTryBody = new BlockStmt();
-            BlockStmt ifBlock = new BlockStmt();
-            ifBlock.addStatement(StaticJavaParser.parseStatement("item" + pkSetter + "(rs.getInt(1));"));
-            ifBlock.addStatement(StaticJavaParser.parseStatement("results[i] = 1;"));
-
-            innerTryBody.addStatement(new IfStmt(
-                    StaticJavaParser.parseExpression("rs.next()"), ifBlock, null));
-            innerTryStmt.setTryBlock(innerTryBody);
-
-            forBody.addStatement(innerTryStmt);
-            forIdx.setBody(forBody);
-            tryBlock.addStatement(forIdx);
-
-            tryStmt.setTryBlock(tryBlock);
-            block.addStatement(tryStmt);
-            block.addStatement(new ReturnStmt(new NameExpr("results")));
-            m.setBody(block);
-            return;
+        Expression psInitializer;
+        if (pkIsAuto && "oracle".equals(vendor)) {
+            // For Oracle pre-12c, assume sequence; adjust if needed
+            psInitializer = StaticJavaParser.parseExpression("conn.prepareStatement(INSERT_SQL, new String[]{\"" + pkField + "\"})");
+        } else {
+            psInitializer = pkIsAuto ?
+                    StaticJavaParser.parseExpression("conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)") :
+                    StaticJavaParser.parseExpression("conn.prepareStatement(INSERT_SQL)");
         }
-
-        // Non-PostgreSQL or non-auto-increment case
         VariableDeclarator psDeclarator = new VariableDeclarator();
         psDeclarator.setName("ps");
         psDeclarator.setType(new ClassOrInterfaceType(null, "PreparedStatement"));
-        psDeclarator.setInitializer(pkIsAuto ?
-                StaticJavaParser.parseExpression("conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)") :
-                StaticJavaParser.parseExpression("conn.prepareStatement(INSERT_SQL)"));
+        psDeclarator.setInitializer(psInitializer);
         tryStmt.getResources().add(new VariableDeclarationExpr(psDeclarator));
 
-        // Add batch entries
-        ForEachStmt batchLoop = new ForEachStmt();
-        batchLoop.setVariable(new VariableDeclarationExpr(new ClassOrInterfaceType(null, modelClassName), itemVar));
-        batchLoop.setIterable(new NameExpr(paramName));
-        BlockStmt batchBody = new BlockStmt();
-        batchBody.addStatement(StaticJavaParser.parseStatement("set" + className + "Params(ps, " + itemVar + ");"));
-        batchBody.addStatement(StaticJavaParser.parseStatement("ps.addBatch();"));
-        batchLoop.setBody(batchBody);
-        tryBlock.addStatement(batchLoop);
+        ForEachStmt innerLoop = new ForEachStmt();
+        innerLoop.setVariable(new VariableDeclarationExpr(new ClassOrInterfaceType(null, modelClassName), itemVar));
+        innerLoop.setIterable(new NameExpr("batch"));
+        BlockStmt innerBody = new BlockStmt();
+        innerBody.addStatement(StaticJavaParser.parseStatement("set" + className + "Params(ps, " + itemVar + ");"));
+        innerBody.addStatement(StaticJavaParser.parseStatement("ps.addBatch();"));
+        innerLoop.setBody(innerBody);
+        tryBlock.addStatement(innerLoop);
 
-        // executeBatch and assign results
-        tryBlock.addStatement(StaticJavaParser.parseStatement("results = ps.executeBatch();"));
+        tryBlock.addStatement(StaticJavaParser.parseStatement("int[] results = ps.executeBatch();"));
+        tryBlock.addStatement(StaticJavaParser.parseStatement("System.arraycopy(results, 0, totalResults, resultIndex, results.length);"));
+        tryBlock.addStatement(StaticJavaParser.parseStatement("resultIndex += results.length;"));
 
         if (pkIsAuto) {
-            // determine proper ResultSet getter based on idType (int/long/String/other)
-            String keyRetrieval;
-            String idTypeNormalized = idType == null ? "" : idType.trim();
-            if ("int".equalsIgnoreCase(idTypeNormalized) || "Integer".equalsIgnoreCase(idTypeNormalized)) {
-                keyRetrieval = "rs.getInt(1)";
-            } else if ("long".equalsIgnoreCase(idTypeNormalized) || "Long".equalsIgnoreCase(idTypeNormalized)) {
-                keyRetrieval = "rs.getLong(1)";
-            } else if ("String".equalsIgnoreCase(idTypeNormalized)) {
-                keyRetrieval = "rs.getString(1)";
-            } else if (!idTypeNormalized.isEmpty()) {
-                // fallback to typed getObject if a wrapper class name provided
-                keyRetrieval = "rs.getObject(1, " + idTypeNormalized + ".class)";
-            } else {
-                // ultimate fallback
-                keyRetrieval = "rs.getObject(1)";
-            }
+            String keyRetrieval = getResultSetGetter(idType) + "(1)";
 
             TryStmt innerTryStmt = new TryStmt();
             BlockStmt innerTryBlock = new BlockStmt();
@@ -593,32 +566,54 @@ public class JdbcDaoGenerator {
             rsDeclarator.setInitializer(StaticJavaParser.parseExpression("ps.getGeneratedKeys()"));
             innerTryStmt.getResources().add(new VariableDeclarationExpr(rsDeclarator));
 
-            innerTryBlock.addStatement(StaticJavaParser.parseStatement("int index = 0;"));
+            innerTryBlock.addStatement(StaticJavaParser.parseStatement("List<" + idType + "> keys = new ArrayList<>();"));
             WhileStmt whileStmt = new WhileStmt();
-            whileStmt.setCondition(StaticJavaParser.parseExpression("rs.next() && index < " + paramName + ".size()"));
+            whileStmt.setCondition(StaticJavaParser.parseExpression("rs.next()"));
             BlockStmt whileBody = new BlockStmt();
-
-            // map key to DTO using chosen getter and include index in potential debug
-            whileBody.addStatement(StaticJavaParser.parseStatement(
-                    "try {\n" +
-                            "    " + paramName + ".get(index)" + pkSetter + "(" + keyRetrieval + ");\n" +
-                            "} catch (Exception e) {\n" +
-                            "    // if mapping the key fails, wrap to give context\n" +
-                            "    throw new SQLException(\"Failed to set generated key for index \" + index + \": \" + e.getMessage(), e);\n" +
-                            "}"
-            ));
-            whileBody.addStatement(StaticJavaParser.parseStatement("index++;"));
+            whileBody.addStatement(StaticJavaParser.parseStatement("keys.add(rs." + keyRetrieval + ");"));
             whileStmt.setBody(whileBody);
             innerTryBlock.addStatement(whileStmt);
+
+            ForStmt forStmt = new ForStmt();
+            NodeList<Expression> initialization = new NodeList<>();
+            initialization.add(StaticJavaParser.parseStatement("int i = 0;").asExpressionStmt().getExpression());
+            forStmt.setInitialization(initialization);
+            forStmt.setCompare(StaticJavaParser.parseExpression("i < batch.size() && i < keys.size()"));
+            NodeList<Expression> update = new NodeList<>();
+            update.add(StaticJavaParser.parseExpression("i++"));
+            forStmt.setUpdate(update);
+            BlockStmt forBody = new BlockStmt();
+            forBody.addStatement(StaticJavaParser.parseStatement("batch.get(i)" + pkSetter + "(keys.get(i));"));
+            forStmt.setBody(forBody);
+            innerTryBlock.addStatement(forStmt);
             innerTryStmt.setTryBlock(innerTryBlock);
             tryBlock.addStatement(innerTryStmt);
         }
 
         tryStmt.setTryBlock(tryBlock);
-        block.addStatement(tryStmt);
+        batchBody.addStatement(tryStmt);
+        batchBody.addStatement(StaticJavaParser.parseStatement("conn.commit();")); // Commit per batch for large operations
+        batchLoop.setBody(batchBody);
+        outerTryBlock.addStatement(batchLoop);
 
-        // return results
-        block.addStatement(new ReturnStmt(new NameExpr("results")));
+        outerTry.setTryBlock(outerTryBlock);
+
+        CatchClause catchClause = new CatchClause();
+        catchClause.setParameter(new Parameter(new ClassOrInterfaceType("SQLException"), "e"));
+        BlockStmt catchBlock = new BlockStmt();
+        catchBlock.addStatement(StaticJavaParser.parseStatement("conn.rollback();"));
+        catchBlock.addStatement(StaticJavaParser.parseStatement("logger.error(\"Batch insert failed\", e);"));
+        catchBlock.addStatement(StaticJavaParser.parseStatement("throw e;"));
+        catchClause.setBody(catchBlock);
+        outerTry.getCatchClauses().add(catchClause);
+
+        BlockStmt finallyBlock = new BlockStmt();
+        finallyBlock.addStatement(StaticJavaParser.parseStatement("conn.setAutoCommit(autoCommit);"));
+        outerTry.setFinallyBlock(finallyBlock);
+
+
+        block.addStatement(outerTry);
+        block.addStatement(StaticJavaParser.parseStatement("return totalResults;"));
         m.setBody(block);
     }
 
@@ -686,11 +681,18 @@ public class JdbcDaoGenerator {
         m.addThrownException(new ClassOrInterfaceType(null, "SQLException"));
 
         BlockStmt block = new BlockStmt();
-
         block.addStatement(StaticJavaParser.parseStatement("if (page < 1) throw new IllegalArgumentException(\"Page must be at least 1\");"));
         block.addStatement(StaticJavaParser.parseStatement("if (pageSize < 1) throw new IllegalArgumentException(\"Page size must be at least 1\");"));
 
         block.addStatement(StaticJavaParser.parseStatement("List<" + modelClassName + "> list = new ArrayList<>();"));
+        block.addStatement(StaticJavaParser.parseStatement("String dbVendor = getDbVendor(conn);"));
+        block.addStatement(StaticJavaParser.parseStatement("boolean isOracle = \"oracle\".equals(dbVendor);"));
+        block.addStatement(StaticJavaParser.parseStatement("String sql = SELECT_ALL_BASE;"));
+        block.addStatement(new IfStmt(
+                StaticJavaParser.parseExpression("isOracle"),
+                StaticJavaParser.parseStatement("sql += \" OFFSET ? ROWS FETCH NEXT ? ROWS ONLY\";"),
+                StaticJavaParser.parseStatement("sql += \" LIMIT ? OFFSET ?\";")
+        ));
 
         TryStmt tryStmt = new TryStmt();
         BlockStmt tryBlock = new BlockStmt();
@@ -698,17 +700,20 @@ public class JdbcDaoGenerator {
         VariableDeclarator psDeclarator = new VariableDeclarator();
         psDeclarator.setName("ps");
         psDeclarator.setType(new ClassOrInterfaceType(null, "PreparedStatement"));
-        psDeclarator.setInitializer(StaticJavaParser.parseExpression("conn.prepareStatement(SELECT_ALL_SQL)"));
+        psDeclarator.setInitializer(StaticJavaParser.parseExpression("conn.prepareStatement(sql)"));
         tryStmt.getResources().add(new VariableDeclarationExpr(psDeclarator));
 
-        boolean isOracle = "ORACLE".equals(vendor);
-        if (isOracle) {
-            tryBlock.addStatement(StaticJavaParser.parseStatement("ps.setInt(1, (page - 1) * pageSize);"));
-            tryBlock.addStatement(StaticJavaParser.parseStatement("ps.setInt(2, pageSize);"));
-        } else {
-            tryBlock.addStatement(StaticJavaParser.parseStatement("ps.setInt(1, pageSize);"));
-            tryBlock.addStatement(StaticJavaParser.parseStatement("ps.setInt(2, (page - 1) * pageSize);"));
-        }
+        IfStmt paramIf = new IfStmt();
+        paramIf.setCondition(StaticJavaParser.parseExpression("isOracle"));
+        BlockStmt thenStmt = new BlockStmt();
+        thenStmt.addStatement(StaticJavaParser.parseStatement("ps.setInt(1, (page - 1) * pageSize);")); // OFFSET
+        thenStmt.addStatement(StaticJavaParser.parseStatement("ps.setInt(2, pageSize);")); // FETCH NEXT
+        BlockStmt elseStmt = new BlockStmt();
+        elseStmt.addStatement(StaticJavaParser.parseStatement("ps.setInt(1, pageSize);")); // LIMIT
+        elseStmt.addStatement(StaticJavaParser.parseStatement("ps.setInt(2, (page - 1) * pageSize);")); // OFFSET
+        paramIf.setThenStmt(thenStmt);
+        paramIf.setElseStmt(elseStmt);
+        tryBlock.addStatement(paramIf);
 
         TryStmt innerTryStmt = new TryStmt();
         BlockStmt innerTryBlock = new BlockStmt();
@@ -749,6 +754,9 @@ public class JdbcDaoGenerator {
         for (Relationship rel : relationships) {
             if (rel.getType() == Relationship.Type.MANY_TO_ONE) {
                 String fkColumn = rel.getFkColumn();
+                ColumnInfo fkColInfo = columnsInfo.stream().filter(c -> c.name.equals(fkColumn)).findFirst().orElse(null);
+                if (fkColInfo == null) continue;
+                String fkType = fkColInfo.javaType;
                 String methodName = "findBy" + StringUtils.toCamelCase(fkColumn, naming.getUppercaseAcronyms(), true);
                 String constantName = "SELECT_BY_" + fkColumn.toUpperCase() + "_SQL";
                 String paramFkName = StringUtils.toCamelCase(fkColumn, naming.getUppercaseAcronyms(), false);
@@ -756,7 +764,7 @@ public class JdbcDaoGenerator {
                 MethodDeclaration m = daoClass.addMethod(methodName, Modifier.Keyword.PUBLIC);
                 m.setType("List<" + modelClassName + ">");
                 m.addParameter("Connection", "conn");
-                m.addParameter("int", paramFkName);
+                m.addParameter(mapJavaTypeToMethod(fkType), paramFkName);
                 m.addThrownException(new ClassOrInterfaceType(null, "SQLException"));
 
                 BlockStmt block = new BlockStmt();
@@ -772,7 +780,7 @@ public class JdbcDaoGenerator {
                 tryStmt.getResources().add(new VariableDeclarationExpr(psDeclarator));
 
                 tryBlock.addStatement(StaticJavaParser.parseStatement(
-                        "ps.setInt(1, " + paramFkName + ");"));
+                        "ps." + getPreparedStatementSetter(fkType) + "(1, " + paramFkName + ");"));
 
                 TryStmt innerTryStmt = new TryStmt();
                 BlockStmt innerTryBlock = new BlockStmt();
@@ -826,7 +834,7 @@ public class JdbcDaoGenerator {
         String pkGetter = paramName + ".get" + StringUtils.toCamelCase(pkField, naming.getUppercaseAcronyms(), true) + "()";
 
         BlockStmt block = new BlockStmt();
-        block.addStatement(StaticJavaParser.parseStatement("if (" + pkGetter + " == 0) throw new IllegalArgumentException(\"Primary key cannot be null for update\");"));
+        block.addStatement(StaticJavaParser.parseStatement("if (" + pkGetter + " == null) throw new IllegalArgumentException(\"Primary key cannot be null for update\");"));
 
         TryStmt tryStmt = new TryStmt();
         BlockStmt tryBlock = new BlockStmt();
@@ -881,9 +889,27 @@ public class JdbcDaoGenerator {
         checkLoop.setIterable(new NameExpr(paramName));
         BlockStmt checkBody = new BlockStmt();
         checkBody.addStatement(new IfStmt(StaticJavaParser.parseExpression(itemVar + " == null"), new ThrowStmt(StaticJavaParser.parseExpression("new IllegalArgumentException(\"Null DTO in batch update\")")), null));
-        checkBody.addStatement(new IfStmt(StaticJavaParser.parseExpression(pkGetter + " == 0"), new ThrowStmt(StaticJavaParser.parseExpression("new IllegalArgumentException(\"Null primary key in batch update\")")), null));
+        checkBody.addStatement(new IfStmt(StaticJavaParser.parseExpression(pkGetter + " == null"), new ThrowStmt(StaticJavaParser.parseExpression("new IllegalArgumentException(\"Null primary key in batch update\")")), null));
         checkLoop.setBody(checkBody);
         block.addStatement(checkLoop);
+
+        block.addStatement(StaticJavaParser.parseStatement("String dbVendor = getDbVendor(conn);"));
+        block.addStatement(StaticJavaParser.parseStatement("boolean isOracle = \"oracle\".equals(dbVendor);"));
+        block.addStatement(StaticJavaParser.parseStatement("int batchSize = isOracle ? 500 : 1000;"));
+        block.addStatement(StaticJavaParser.parseStatement("List<List<" + modelClassName + ">> batches = chunkList(" + paramName + ", batchSize);"));
+        block.addStatement(StaticJavaParser.parseStatement("int[] totalResults = new int[" + paramName + ".size()];"));
+        block.addStatement(StaticJavaParser.parseStatement("int resultIndex = 0;"));
+
+        block.addStatement(StaticJavaParser.parseStatement("boolean autoCommit = conn.getAutoCommit();"));
+        block.addStatement(StaticJavaParser.parseStatement("conn.setAutoCommit(false);"));
+
+        TryStmt outerTry = new TryStmt();
+        BlockStmt outerTryBlock = new BlockStmt();
+
+        ForEachStmt batchLoop = new ForEachStmt();
+        batchLoop.setVariable(new VariableDeclarationExpr(new ClassOrInterfaceType(null, "List<" + modelClassName + ">"), "batch"));
+        batchLoop.setIterable(new NameExpr("batches"));
+        BlockStmt batchBody = new BlockStmt();
 
         TryStmt tryStmt = new TryStmt();
         BlockStmt tryBlock = new BlockStmt();
@@ -894,24 +920,44 @@ public class JdbcDaoGenerator {
         psDeclarator.setInitializer(StaticJavaParser.parseExpression("conn.prepareStatement(UPDATE_SQL)"));
         tryStmt.getResources().add(new VariableDeclarationExpr(psDeclarator));
 
-        ForEachStmt forEachStmt = new ForEachStmt();
-        forEachStmt.setVariable(new VariableDeclarationExpr(new ClassOrInterfaceType(null, modelClassName), itemVar));
-        forEachStmt.setIterable(new NameExpr(paramName));
-
-        BlockStmt forEachBody = new BlockStmt();
-        forEachBody.addStatement(StaticJavaParser.parseStatement("set" + className + "Params(ps, " + itemVar + ");"));
-        forEachBody.addStatement(StaticJavaParser.parseStatement(
+        ForEachStmt innerLoop = new ForEachStmt();
+        innerLoop.setVariable(new VariableDeclarationExpr(new ClassOrInterfaceType(null, modelClassName), itemVar));
+        innerLoop.setIterable(new NameExpr("batch"));
+        BlockStmt innerBody = new BlockStmt();
+        innerBody.addStatement(StaticJavaParser.parseStatement("set" + className + "Params(ps, " + itemVar + ");"));
+        innerBody.addStatement(StaticJavaParser.parseStatement(
                 "ps." + getPreparedStatementSetter(idType) + "(" + (updateCols.size() + 1) + ", " + pkGetter + ");"));
-        forEachBody.addStatement(StaticJavaParser.parseStatement("ps.addBatch();"));
-        forEachStmt.setBody(forEachBody);
+        innerBody.addStatement(StaticJavaParser.parseStatement("ps.addBatch();"));
+        innerLoop.setBody(innerBody);
+        tryBlock.addStatement(innerLoop);
 
-        tryBlock.addStatement(forEachStmt);
         tryBlock.addStatement(StaticJavaParser.parseStatement("int[] results = ps.executeBatch();"));
-        tryBlock.addStatement(new ReturnStmt(new NameExpr("results")));
-
+        tryBlock.addStatement(StaticJavaParser.parseStatement("System.arraycopy(results, 0, totalResults, resultIndex, results.length);"));
+        tryBlock.addStatement(StaticJavaParser.parseStatement("resultIndex += results.length;"));
         tryStmt.setTryBlock(tryBlock);
-        block.addStatement(tryStmt);
+        batchBody.addStatement(tryStmt);
+        batchBody.addStatement(StaticJavaParser.parseStatement("conn.commit();")); // Commit per batch for large operations
+        batchLoop.setBody(batchBody);
+        outerTryBlock.addStatement(batchLoop);
 
+        outerTry.setTryBlock(outerTryBlock);
+
+        CatchClause catchClause = new CatchClause();
+        catchClause.setParameter(new Parameter(new ClassOrInterfaceType("SQLException"), "e"));
+        BlockStmt catchBlock = new BlockStmt();
+        catchBlock.addStatement(StaticJavaParser.parseStatement("conn.rollback();"));
+        catchBlock.addStatement(StaticJavaParser.parseStatement("logger.error(\"Batch update failed\", e);"));
+        catchBlock.addStatement(StaticJavaParser.parseStatement("throw e;"));
+        catchClause.setBody(catchBlock);
+        outerTry.getCatchClauses().add(catchClause);
+
+        BlockStmt finallyBlock = new BlockStmt();
+        finallyBlock.addStatement(StaticJavaParser.parseStatement("conn.setAutoCommit(autoCommit);"));
+        outerTry.setFinallyBlock(finallyBlock);
+
+
+        block.addStatement(outerTry);
+        block.addStatement(StaticJavaParser.parseStatement("return totalResults;"));
         m.setBody(block);
     }
 
@@ -972,31 +1018,106 @@ public class JdbcDaoGenerator {
         checkLoop.setBody(checkBody);
         block.addStatement(checkLoop);
 
+        block.addStatement(StaticJavaParser.parseStatement("String dbVendor = getDbVendor(conn);"));
+        block.addStatement(StaticJavaParser.parseStatement("boolean isOracle = \"oracle\".equals(dbVendor);"));
+        block.addStatement(StaticJavaParser.parseStatement("int chunkSize = isOracle ? 1000 : Integer.MAX_VALUE;")); // Limit for Oracle IN clause
+        block.addStatement(StaticJavaParser.parseStatement("List<List<" + idType + ">> chunks = chunkList(ids, chunkSize);"));
+        block.addStatement(StaticJavaParser.parseStatement("int[] totalResults = new int[ids.size()];"));
+        block.addStatement(StaticJavaParser.parseStatement("int resultIndex = 0;"));
+
+        block.addStatement(StaticJavaParser.parseStatement("boolean autoCommit = conn.getAutoCommit();"));
+        block.addStatement(StaticJavaParser.parseStatement("conn.setAutoCommit(false);"));
+
+        TryStmt outerTry = new TryStmt();
+        BlockStmt outerTryBlock = new BlockStmt();
+
+        ForEachStmt chunkLoop = new ForEachStmt();
+        chunkLoop.setVariable(new VariableDeclarationExpr(new ClassOrInterfaceType(null, "List<" + idType + ">"), "chunk"));
+        chunkLoop.setIterable(new NameExpr("chunks"));
+        BlockStmt chunkBody = new BlockStmt();
+
+        // Build placeholders using StringBuilder to avoid parsing issues
+        chunkBody.addStatement(StaticJavaParser.parseStatement("StringBuilder sb = new StringBuilder();"));
+        ForStmt placeholdersLoop = new ForStmt();
+        NodeList<Expression> placeholdersInit = new NodeList<>();
+        placeholdersInit.add(StaticJavaParser.parseStatement("int k = 0;").asExpressionStmt().getExpression());
+        placeholdersLoop.setInitialization(placeholdersInit);
+        placeholdersLoop.setCompare(StaticJavaParser.parseExpression("k < chunk.size()"));
+        NodeList<Expression> placeholdersUpdate = new NodeList<>();
+        placeholdersUpdate.add(StaticJavaParser.parseExpression("k++"));
+        placeholdersLoop.setUpdate(placeholdersUpdate);
+        BlockStmt placeholdersBody = new BlockStmt();
+        placeholdersBody.addStatement(new IfStmt(
+                StaticJavaParser.parseExpression("k > 0"),
+                StaticJavaParser.parseStatement("sb.append(\", \");"),
+                null
+        ));
+        placeholdersBody.addStatement(StaticJavaParser.parseStatement("sb.append(\"?\");"));
+        placeholdersLoop.setBody(placeholdersBody);
+        chunkBody.addStatement(placeholdersLoop);
+        chunkBody.addStatement(StaticJavaParser.parseStatement("String placeholders = sb.toString();"));
+
+        // Build SQL using String.format
+        chunkBody.addStatement(StaticJavaParser.parseStatement("String sql = String.format(\"DELETE FROM %s WHERE %s IN (%s)\", TABLE, COL_" + pkField.toUpperCase() + ", placeholders);"));
+
         TryStmt tryStmt = new TryStmt();
         BlockStmt tryBlock = new BlockStmt();
 
         VariableDeclarator psDeclarator = new VariableDeclarator();
         psDeclarator.setName("ps");
         psDeclarator.setType(new ClassOrInterfaceType(null, "PreparedStatement"));
-        psDeclarator.setInitializer(StaticJavaParser.parseExpression("conn.prepareStatement(DELETE_SQL)"));
+        psDeclarator.setInitializer(StaticJavaParser.parseExpression("conn.prepareStatement(sql)"));
         tryStmt.getResources().add(new VariableDeclarationExpr(psDeclarator));
 
-        ForEachStmt forEachStmt = new ForEachStmt();
-        forEachStmt.setVariable(new VariableDeclarationExpr(new ClassOrInterfaceType(null, idType), "id"));
-        forEachStmt.setIterable(new NameExpr("ids"));
+        ForStmt setLoop = new ForStmt();
+        NodeList<Expression> init = new NodeList<>();
+        init.add(StaticJavaParser.parseStatement("int i = 0;").asExpressionStmt().getExpression());
+        setLoop.setInitialization(init);
+        setLoop.setCompare(StaticJavaParser.parseExpression("i < chunk.size()"));
+        NodeList<Expression> update = new NodeList<>();
+        update.add(StaticJavaParser.parseExpression("i++"));
+        setLoop.setUpdate(update);
+        BlockStmt setBody = new BlockStmt();
+        setBody.addStatement(StaticJavaParser.parseStatement("ps." + getPreparedStatementSetter(idType) + "(i + 1, chunk.get(i));"));
+        setLoop.setBody(setBody);
+        tryBlock.addStatement(setLoop);
 
-        BlockStmt forEachBody = new BlockStmt();
-        forEachBody.addStatement(StaticJavaParser.parseStatement("ps." + getPreparedStatementSetter(idType) + "(1, id);"));
-        forEachBody.addStatement(StaticJavaParser.parseStatement("ps.addBatch();"));
-        forEachStmt.setBody(forEachBody);
-
-        tryBlock.addStatement(forEachStmt);
-        tryBlock.addStatement(StaticJavaParser.parseStatement("int[] results = ps.executeBatch();"));
-        tryBlock.addStatement(new ReturnStmt(new NameExpr("results")));
-
+        tryBlock.addStatement(StaticJavaParser.parseStatement("int affected = ps.executeUpdate();"));
+        ForStmt resultLoop = new ForStmt();
+        NodeList<Expression> resultInit = new NodeList<>();
+        resultInit.add(StaticJavaParser.parseStatement("int j = 0;").asExpressionStmt().getExpression());
+        resultLoop.setInitialization(resultInit);
+        resultLoop.setCompare(StaticJavaParser.parseExpression("j < affected"));
+        NodeList<Expression> resultUpdate = new NodeList<>();
+        resultUpdate.add(StaticJavaParser.parseExpression("j++"));
+        resultLoop.setUpdate(resultUpdate);
+        BlockStmt resultBody = new BlockStmt();
+        resultBody.addStatement(StaticJavaParser.parseStatement("totalResults[resultIndex++] = 1;")); // Approximate per row
+        resultLoop.setBody(resultBody);
+        tryBlock.addStatement(resultLoop);
         tryStmt.setTryBlock(tryBlock);
-        block.addStatement(tryStmt);
+        chunkBody.addStatement(tryStmt);
+        chunkBody.addStatement(StaticJavaParser.parseStatement("conn.commit();")); // Commit per chunk for large deletes
+        chunkLoop.setBody(chunkBody);
+        outerTryBlock.addStatement(chunkLoop);
 
+        outerTry.setTryBlock(outerTryBlock);
+
+        CatchClause catchClause = new CatchClause();
+        catchClause.setParameter(new Parameter(new ClassOrInterfaceType("SQLException"), "e"));
+        BlockStmt catchBlock = new BlockStmt();
+        catchBlock.addStatement(StaticJavaParser.parseStatement("conn.rollback();"));
+        catchBlock.addStatement(StaticJavaParser.parseStatement("logger.error(\"Batch delete failed\", e);"));
+        catchBlock.addStatement(StaticJavaParser.parseStatement("throw e;"));
+        catchClause.setBody(catchBlock);
+        outerTry.getCatchClauses().add(catchClause);
+
+        BlockStmt finallyBlock = new BlockStmt();
+        finallyBlock.addStatement(StaticJavaParser.parseStatement("conn.setAutoCommit(autoCommit);"));
+        outerTry.setFinallyBlock(finallyBlock);
+
+        block.addStatement(outerTry);
+        block.addStatement(StaticJavaParser.parseStatement("return totalResults;"));
         m.setBody(block);
     }
 
@@ -1035,21 +1156,24 @@ public class JdbcDaoGenerator {
                 String relatedPk = c.referencedTable + "_id";
                 String relatedPkCamel = StringUtils.toCamelCase(relatedPk, naming.getUppercaseAcronyms(), true);
 
-                Expression condition = StaticJavaParser.parseExpression(
-                        relationGetter + " != null && " + relationGetter + ".get" + relatedPkCamel + "() > 0");
+                Expression condition = StaticJavaParser.parseExpression(relationGetter + " != null");
                 BlockStmt thenBlock = new BlockStmt();
                 thenBlock.addStatement(StaticJavaParser.parseStatement(
-                        "ps.setInt(" + idx + ", " + relationGetter + ".get" + relatedPkCamel + "());"));
+                        "ps." + getPreparedStatementSetter(c.javaType) + "(" + idx + ", " + relationGetter + ".get" + relatedPkCamel + "());"));
                 BlockStmt elseBlock = new BlockStmt();
-                elseBlock.addStatement(StaticJavaParser.parseStatement("ps.setNull(" + idx + ", Types.INTEGER);"));
+                elseBlock.addStatement(StaticJavaParser.parseStatement("ps.setNull(" + idx + ", " + getTypesConstant(c.javaType) + ");"));
                 block.addStatement(new IfStmt(condition, thenBlock, elseBlock));
-            } else if ("java.time.LocalDateTime".equals(c.javaType)) {
-                String varName = "updateTime" + idx;
-                Expression defaultExpr = StaticJavaParser.parseExpression(
-                        "Objects.requireNonNullElse(" + getter + ", LocalDateTime.now())");
-                block.addStatement(StaticJavaParser.parseStatement("LocalDateTime " + varName + " = " + defaultExpr + ";"));
-                block.addStatement(StaticJavaParser.parseStatement("ps.setTimestamp(" + idx + ", Timestamp.valueOf(" + varName + "));"));
-            } else if ("java.time.LocalDate".equals(c.javaType)) {
+            }else if ("java.time.LocalDateTime".equals(c.javaType)) {
+                String varName = "val" + idx;
+                block.addStatement(StaticJavaParser.parseStatement("java.time.LocalDateTime " + varName + " = " + getter + ";"));
+                Expression condition = StaticJavaParser.parseExpression(varName + " != null");
+                BlockStmt thenBlock = new BlockStmt();
+                thenBlock.addStatement(StaticJavaParser.parseStatement("ps.setTimestamp(" + idx + ", java.sql.Timestamp.valueOf(" + varName + "));"));
+                BlockStmt elseBlock = new BlockStmt();
+                elseBlock.addStatement(StaticJavaParser.parseStatement("ps.setNull(" + idx + ", Types.TIMESTAMP);"));
+                block.addStatement(new IfStmt(condition, thenBlock, elseBlock));
+            }
+            else if ("java.time.LocalDate".equals(c.javaType)) {
                 String varName = "val" + idx;
                 block.addStatement(StaticJavaParser.parseStatement("java.time.LocalDate " + varName + " = " + getter + ";"));
                 Expression condition = StaticJavaParser.parseExpression(varName + " != null");
@@ -1092,7 +1216,6 @@ public class JdbcDaoGenerator {
                         "ps." + getPreparedStatementSetter(c.javaType) + "(" + idx + ", " + getter + ");"));
             }
         }
-
         m.setBody(block);
     }
 
@@ -1142,9 +1265,8 @@ public class JdbcDaoGenerator {
                 String relatedClass = StringUtils.toCamelCase(c.referencedTable, naming.getUppercaseAcronyms(), true);
                 String relatedPk = c.referencedTable + "_id";
                 String relatedPkCamel = StringUtils.toCamelCase(relatedPk, naming.getUppercaseAcronyms(), true);
-
                 block.addStatement(StaticJavaParser.parseStatement(
-                        "Integer " + c.name + " = rs.getObject(" + colConst + ", Integer.class);"));
+                        c.javaType + " " + c.name + " = rs.getObject(" + colConst + ", " + c.javaType + ".class);"));
                 block.addStatement(StaticJavaParser.parseStatement(setter + "(" + c.name + ");"));
                 BlockStmt ifBlock = new BlockStmt();
                 ifBlock.addStatement(StaticJavaParser.parseStatement(
@@ -1154,7 +1276,7 @@ public class JdbcDaoGenerator {
                 ifBlock.addStatement(StaticJavaParser.parseStatement(
                         objectName + ".set" + relationshipName + "(" + relatedObjectName + ");"));
                 block.addStatement(new IfStmt(
-                        StaticJavaParser.parseExpression(c.name + " != null && " + c.name + " > 0"),
+                        StaticJavaParser.parseExpression(c.name + " != null"),
                         ifBlock,
                         null));
             } else if (c.javaType.equals("String") && c.isBinary) {
@@ -1238,7 +1360,6 @@ public class JdbcDaoGenerator {
         }
 
         dbType = dbType.toUpperCase();
-
         // Vendor-specific adjustments
         if ("ORACLE".equals(vendor) && "DATE".equals(dbType)) {
             return "java.time.LocalDateTime";
@@ -1247,7 +1368,8 @@ public class JdbcDaoGenerator {
         // Database type mapping - this takes precedence over column name patterns
         return switch (dbType) {
             case "SERIAL" -> "Integer";
-            case "VARCHAR", "VARCHAR2", "CHAR", "TEXT", "CLOB", "LONGTEXT", "MEDIUMTEXT", "NVARCHAR2", "NCLOB", "LONG" -> "String";
+            case "VARCHAR", "VARCHAR2", "CHAR", "TEXT", "CLOB", "LONGTEXT", "MEDIUMTEXT", "NVARCHAR2", "NCLOB",
+                 "LONG" -> "String";
             case "INT", "INTEGER", "SMALLINT", "TINYINT", "YEAR", "INT4", "INT2" -> {
                 // special-case: MySQL TINYINT(1) commonly used for boolean
                 if ("TINYINT".equals(dbType) && columnSize == 1) {
@@ -1256,15 +1378,8 @@ public class JdbcDaoGenerator {
                 yield "Integer";
             }
             case "BIGINT", "INT8" -> "Long";
-            case "DECIMAL", "NUMERIC", "NUMBER" -> {
-                // Use BigDecimal for monetary values or high precision decimals
-                if (decimalDigits > 0 || colNameLower.contains("amount") || colNameLower.contains("price") ||
-                        colNameLower.contains("cost") || colNameLower.contains("rate")) {
-                    yield "java.math.BigDecimal";
-                } else {
-                    yield "Long";
-                }
-            }
+            case "DECIMAL", "NUMERIC", "NUMBER" ->
+                    "java.math.BigDecimal"; // CHANGED: Always use BigDecimal for decimal types
             case "FLOAT", "REAL", "BINARY_FLOAT" -> {
                 // For monetary columns, use BigDecimal even if stored as FLOAT
                 if (colNameLower.contains("amount") || colNameLower.contains("price") ||

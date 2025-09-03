@@ -129,6 +129,7 @@ public class JdbiDaoGenerator {
         cu.addImport("org.jdbi.v3.sqlobject.statement.SqlQuery");
         cu.addImport("org.jdbi.v3.sqlobject.statement.SqlUpdate");
         cu.addImport("org.jdbi.v3.sqlobject.config.RegisterBeanMapper");
+        cu.addImport("org.jdbi.v3.sqlobject.customizer.BindList");
 
         // Add Java imports
         cu.addImport("java.util.List");
@@ -147,14 +148,14 @@ public class JdbiDaoGenerator {
 
         DatabaseMetaData dbMetaData = columnsRs.getStatement().getConnection().getMetaData();
 
-        // Get primary and foreign keys
+        // Get primary and foreign keys FIRST
         Set<String> pkColumns = getPrimaryKeys(dbMetaData, dbConfig.getSchema(), tableName);
         Set<String> fkColumns = getForeignKeys(dbMetaData, dbConfig.getSchema(), tableName);
 
-        // Process columns
-        List<ColumnInfo> columns = processColumns(columnsRs, pkColumns, fkColumns);
+        // IMMEDIATELY extract all column data before any other processing
+        List<ColumnInfo> columns = extractAllColumnData(columnsRs, pkColumns, fkColumns);
 
-        // Determine primary key info
+        // Now process the extracted data (no more ResultSet access needed)
         String primaryKeyColumn = pkColumns.isEmpty() ? tableName + "_id" : pkColumns.iterator().next();
         String primaryKeyCamel = toCamelCase(primaryKeyColumn, naming.getUppercaseAcronyms(), false);
 
@@ -175,6 +176,7 @@ public class JdbiDaoGenerator {
         return new TableMetadata(tableName, columns, primaryKeyColumn, primaryKeyCamel,
                 primaryKeyType, hasAutoPk, relationshipMap, isJoinTable);
     }
+
 
     private static Set<String> getPrimaryKeys(DatabaseMetaData metaData, String schema, String tableName)
             throws SQLException {
@@ -198,16 +200,44 @@ public class JdbiDaoGenerator {
         return fkColumns;
     }
 
-    private static List<ColumnInfo> processColumns(ResultSet columnsRs, Set<String> pkColumns,
-                                                   Set<String> fkColumns) throws SQLException {
+    // REPLACE the existing processColumns method with this one
+    private static List<ColumnInfo> extractAllColumnData(ResultSet columnsRs, Set<String> pkColumns,
+                                                         Set<String> fkColumns) throws SQLException {
         List<ColumnInfo> columns = new ArrayList<>();
 
+        // Extract ALL data immediately while ResultSet is still valid
         while (columnsRs.next()) {
-            String columnName = columnsRs.getString("COLUMN_NAME");
-            String dbType = columnsRs.getString("TYPE_NAME");
+            String columnName = null;
+            String dbType = null;
+            String autoIncrementValue = null;
+            String defaultValue = null;
+
+            try {
+                columnName = columnsRs.getString("COLUMN_NAME");
+                dbType = columnsRs.getString("TYPE_NAME");
+
+                // Handle potential null values that cause stream issues
+                autoIncrementValue = columnsRs.getString("IS_AUTOINCREMENT");
+
+                // Safely get default value - this often causes stream issues in Oracle
+                try {
+                    defaultValue = columnsRs.getString("COLUMN_DEF");
+                } catch (SQLException e) {
+                    // Oracle sometimes has issues with COLUMN_DEF, set to null
+                    defaultValue = null;
+                }
+
+            } catch (SQLException e) {
+                System.err.println("Error reading column data: " + e.getMessage());
+                continue; // Skip this column and continue with next
+            }
+
+            if (columnName == null || dbType == null) {
+                continue; // Skip invalid columns
+            }
+
+            boolean isAutoIncrement = "YES".equalsIgnoreCase(autoIncrementValue);
             String javaType = mapDbTypeToJava(dbType, columnName, fkColumns);
-            boolean isAutoIncrement = "YES".equals(columnsRs.getString("IS_AUTOINCREMENT"));
-            String defaultValue = columnsRs.getString("COLUMN_DEF");
             boolean isPrimaryKey = pkColumns.contains(columnName);
             boolean isForeignKey = fkColumns.contains(columnName);
             boolean isGenerated = isAutoIncrement ||
@@ -219,6 +249,7 @@ public class JdbiDaoGenerator {
 
         return columns;
     }
+
 
     private static Map<String, Relationship> processRelationships(List<Relationship> relationships) {
         Map<String, Relationship> relationshipMap = new HashMap<>();
@@ -490,7 +521,7 @@ public class JdbiDaoGenerator {
                 .setType(String.format("Collection<%s>", getWrapperType(metadata.primaryKeyType)))
                 .setName("ids")
                 .addAnnotation(new SingleMemberAnnotationExpr(
-                        new Name("Bind"), new StringLiteralExpr("ids"))));
+                        new Name("BindList"), new StringLiteralExpr("ids"))));
 
         bulkDeleteByIds.setBody(null);
 
@@ -538,7 +569,7 @@ public class JdbiDaoGenerator {
                 .setType(String.format("Collection<%s>", getWrapperType(metadata.primaryKeyType)))
                 .setName("ids")
                 .addAnnotation(new SingleMemberAnnotationExpr(
-                        new Name("Bind"), new StringLiteralExpr("ids"))));
+                        new Name("BindList"), new StringLiteralExpr("ids"))));
 
         bulkFindByIds.setBody(null);
     }
@@ -1030,14 +1061,21 @@ public class JdbiDaoGenerator {
         if (dbType == null) return "String";
 
         return switch (dbType.toUpperCase()) {
-            case "VARCHAR", "VARCHAR2", "CHAR", "TEXT", "CLOB" -> "String";
-            case "NUMBER", "DECIMAL", "NUMERIC", "FLOAT", "DOUBLE" -> "java.math.BigDecimal";
+            case "VARCHAR", "VARCHAR2", "CHAR", "TEXT", "CLOB", "NVARCHAR", "NCHAR", "NCLOB" -> "String";
+            case "NUMBER" -> {
+                // Oracle NUMBER - default to BigDecimal for safety
+                yield "java.math.BigDecimal";
+            }
+            case "DECIMAL", "NUMERIC", "FLOAT", "DOUBLE", "BINARY_DOUBLE", "BINARY_FLOAT" -> "java.math.BigDecimal";
             case "INT", "INTEGER", "SMALLINT", "SERIAL" -> "int";
             case "BIGINT", "BIGSERIAL" -> "long";
-            case "DATE", "DATETIME", "TIMESTAMP", "TIMESTAMPTZ" -> "java.sql.Timestamp";
+            case "DATE", "DATETIME", "TIMESTAMP", "TIMESTAMPTZ", "TIMESTAMP WITH TIME ZONE",
+                 "TIMESTAMP WITH LOCAL TIME ZONE" -> "java.sql.Timestamp";
             case "BOOLEAN", "BOOL" -> "boolean";
             case "JSON", "JSONB" -> "String";
+            case "BLOB", "RAW", "LONG RAW" -> "byte[]";
             default -> "String";
         };
     }
+
 }

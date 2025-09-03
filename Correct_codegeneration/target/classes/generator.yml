@@ -2,22 +2,22 @@ generator:
   name: "CustomCodeGen"
 
   database:
-    dialect: "PostgreSQL"
-    driver: "org.postgresql.Driver"
-    url: "jdbc:postgresql://localhost:5432/postgres"
-    user: "postgres"
-    password: "root"
-    schema: "public"
+    dialect: "Oracle"
+    driver: "oracle.jdbc.OracleDriver"
+    url: "jdbc:oracle:thin:@BSIT_SRV01:1521:fin"
+    user: "FG_DEMO_IR"
+    password: "FG_DEMO_IR"
+    schema: "FG_DEMO_IR"
     includes:
       - ".*"
     excludes:
       - "flyway_schema_history"
     input-filter:
-      table-types: ["TABLE", "VIEW"]
+      table-types: [ "TABLE", "VIEW" ]
     naming-strategy:
-      strip-prefixes: ["tbl_", "v_"]
+      strip-prefixes: [ "tbl_", "v_" ]
       convert-to-camelCase: true
-      uppercase-acronyms: ["ID", "URL", "API"]
+      uppercase-acronyms: [ "ID", "URL", "API" ]
 
   target:
     base-package: "com.bsit.codegeneration"
@@ -34,7 +34,7 @@ generator:
     builder-pattern: true
     package-name: "dto"
     use-java-time: true
-    strip-prefixes: ["tbl_", "v_"]
+    strip-prefixes: [ "tbl_", "v_" ]
     annotations:
       - "javax.validation.constraints.NotNull"
     include-relationships: true
@@ -45,7 +45,7 @@ generator:
     generate: true
     annotations:
       - "lombok.Data"
-    implement-interfaces: []
+    implement-interfaces: [ ]
     serializable: true
     use-java-time: true
     add-builder-pattern: true
@@ -58,7 +58,7 @@ generator:
     generate: true
     builder-pattern: true
     package-name: "record"
-    strip-prefixes: ["tbl_", "v_"]
+    strip-prefixes: [ "tbl_", "v_" ]
     use-java-time: true
     annotations:
       - "javax.validation.constraints.NotNull"

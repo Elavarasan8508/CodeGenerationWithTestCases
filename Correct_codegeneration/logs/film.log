@@ -1,45 +1,21 @@
-2025-08-30 10:28:44 [main] INFO  filmLogger - Reading table: film
-2025-08-30 10:28:44 [main] INFO  filmLogger - Record generated for: film
-2025-08-30 10:28:44 [main] INFO  filmLogger - DAO generated for: film
-2025-08-30 11:22:48 [main] INFO  filmLogger - Reading table: film
-2025-08-30 11:22:48 [main] INFO  filmLogger - Record generated for: film
-2025-08-30 11:22:48 [main] INFO  filmLogger - DAO generated for: film
-2025-08-30 11:23:39 [main] INFO  filmLogger - Reading table: film
-2025-08-30 11:23:39 [main] INFO  filmLogger - Record generated for: film
-2025-08-30 11:23:39 [main] INFO  filmLogger - DAO generated for: film
-2025-08-30 11:25:38 [main] INFO  filmLogger - Reading table: film
-2025-08-30 11:25:38 [main] INFO  filmLogger - Record generated for: film
-2025-08-30 11:25:38 [main] INFO  filmLogger - DAO generated for: film
-2025-08-30 13:35:41 [main] INFO  filmLogger - Reading table: film
-2025-08-30 13:35:41 [main] INFO  filmLogger - Record generated for: film
-2025-08-30 13:35:41 [main] INFO  filmLogger - DAO generated for: film
-2025-08-30 16:29:52 [main] INFO  filmLogger - Reading table: film
-2025-08-30 16:29:52 [main] INFO  filmLogger - Record generated for: film
-2025-08-30 16:29:52 [main] INFO  filmLogger - DAO generated for: film
-2025-08-30 16:37:03 [main] INFO  filmLogger - Reading table: film
-2025-08-30 16:37:03 [main] INFO  filmLogger - Record generated for: film
-2025-08-30 16:37:03 [main] INFO  filmLogger - DAO generated for: film
-2025-08-30 16:49:18 [main] INFO  filmLogger - Reading table: film
-2025-08-30 16:49:18 [main] INFO  filmLogger - Record generated for: film
-2025-08-30 16:49:18 [main] INFO  filmLogger - DAO generated for: film
-2025-08-30 16:58:11 [main] INFO  filmLogger - Reading table: film
-2025-08-30 16:58:11 [main] INFO  filmLogger - Record generated for: film
-2025-08-30 16:58:11 [main] INFO  filmLogger - DAO generated for: film
-2025-08-30 17:54:54 [main] INFO  filmLogger - Reading table: film
-2025-08-30 17:54:54 [main] INFO  filmLogger - Record generated for: film
-2025-08-30 17:54:54 [main] INFO  filmLogger - DAO generated for: film
-2025-08-30 18:06:08 [main] INFO  filmLogger - Reading table: film
-2025-08-30 18:06:08 [main] INFO  filmLogger - Record generated for: film
-2025-08-30 18:06:08 [main] INFO  filmLogger - DAO generated for: film
-2025-08-30 18:19:54 [main] INFO  filmLogger - Reading table: film
-2025-08-30 18:19:54 [main] INFO  filmLogger - Record generated for: film
-2025-08-30 18:19:54 [main] INFO  filmLogger - DAO generated for: film
-2025-08-30 18:23:24 [main] INFO  filmLogger - Reading table: film
-2025-08-30 18:23:24 [main] INFO  filmLogger - Record generated for: film
-2025-08-30 18:23:24 [main] INFO  filmLogger - DAO generated for: film
-2025-08-30 18:28:31 [main] INFO  filmLogger - Reading table: film
-2025-08-30 18:28:31 [main] INFO  filmLogger - Record generated for: film
-2025-08-30 18:28:31 [main] INFO  filmLogger - DAO generated for: film
-2025-08-30 18:30:00 [main] INFO  filmLogger - Reading table: film
-2025-08-30 18:30:00 [main] INFO  filmLogger - Record generated for: film
-2025-08-30 18:30:00 [main] INFO  filmLogger - DAO generated for: film
+2025-09-03 10:30:30 [main] INFO  filmLogger - Reading table: film
+2025-09-03 10:30:31 [main] INFO  filmLogger - Record generated for: film
+2025-09-03 10:30:32 [main] INFO  filmLogger - DAO generated for: film
+2025-09-03 10:43:36 [main] INFO  filmLogger - Reading table: film
+2025-09-03 10:43:36 [main] INFO  filmLogger - Record generated for: film
+2025-09-03 10:43:36 [main] INFO  filmLogger - DAO generated for: film
+2025-09-03 11:05:59 [main] INFO  filmLogger - Reading table: film
+2025-09-03 11:05:59 [main] INFO  filmLogger - Record generated for: film
+2025-09-03 11:05:59 [main] INFO  filmLogger - DAO generated for: film
+2025-09-03 11:46:55 [main] INFO  filmLogger - Reading table: film
+2025-09-03 11:46:55 [main] INFO  filmLogger - Record generated for: film
+2025-09-03 11:46:55 [main] INFO  filmLogger - DAO generated for: film
+2025-09-03 12:03:26 [main] INFO  filmLogger - Reading table: film
+2025-09-03 12:03:26 [main] INFO  filmLogger - Record generated for: film
+2025-09-03 12:03:26 [main] INFO  filmLogger - DAO generated for: film
+2025-09-03 12:08:13 [main] INFO  filmLogger - Reading table: film
+2025-09-03 12:08:13 [main] INFO  filmLogger - Record generated for: film
+2025-09-03 12:08:13 [main] INFO  filmLogger - DAO generated for: film
+2025-09-03 12:09:24 [main] INFO  filmLogger - Reading table: film
+2025-09-03 12:09:24 [main] INFO  filmLogger - Record generated for: film
+2025-09-03 12:09:24 [main] INFO  filmLogger - DAO generated for: film

@@ -76,6 +76,7 @@ public class DbReader {
                     }
                 }
 
+
                 try (ResultSet columns = metaData.getColumns(null, schema, tableName, "%")) {
                     if (daoConfig.isGenerate()) {
                         JdbiDaoGenerator.generateDao(tableName, columns, dbConfig, target, daoConfig, relationships, reverseRelationships);
@@ -112,12 +113,12 @@ public class DbReader {
         try (ResultSet rs = metaData.getExportedKeys(null, schema, tableName)) {
             while (rs.next()) {
                 revRels.add(new Relationship(
-                    rs.getString("FKTABLE_NAME"),
-                    rs.getString("PKCOLUMN_NAME"),
-                    rs.getString("FKCOLUMN_NAME"),
-                    true,
-                    Relationship.Type.ONE_TO_MANY,
-                    null
+                        rs.getString("FKTABLE_NAME"),
+                        rs.getString("PKCOLUMN_NAME"),
+                        rs.getString("FKCOLUMN_NAME"),
+                        true,
+                        Relationship.Type.ONE_TO_MANY,
+                        null
                 ));
             }
         }
