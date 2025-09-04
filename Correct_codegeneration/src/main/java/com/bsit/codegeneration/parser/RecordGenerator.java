@@ -13,7 +13,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.*;
 
-public class RecordGenerator {
+public class
+RecordGenerator {
 
     public static void generateRecord(String tableName, ResultSet columns, DatabaseConfig dbConfig,
                                       TargetConfig target, RecordConfig recordConfig,

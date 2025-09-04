@@ -137,7 +137,7 @@ public class JdbiDaoGenerator {
         cu.addImport("java.util.Collection"); // NEW: For bulk operations
 
         // Add entity import
-        cu.addImport("com.bsit.codegeneration.entity." + entityClassName);
+        cu.addImport("com.bsit.codegeneration.pojo." + entityClassName);
 
         return cu;
     }
@@ -240,8 +240,12 @@ public class JdbiDaoGenerator {
             String javaType = mapDbTypeToJava(dbType, columnName, fkColumns);
             boolean isPrimaryKey = pkColumns.contains(columnName);
             boolean isForeignKey = fkColumns.contains(columnName);
+
+            String lowerColumn = columnName.toLowerCase();
             boolean isGenerated = isAutoIncrement ||
-                    columnName.toLowerCase().matches(".*(created|updated|last_update).*");
+                    lowerColumn.contains("created") ||
+                    lowerColumn.contains("updated") ||
+                    lowerColumn.contains("last_update");
 
             columns.add(new ColumnInfo(columnName, javaType, dbType, isAutoIncrement,
                     defaultValue, isGenerated, isPrimaryKey, isForeignKey));
