@@ -9,8 +9,10 @@ import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.expr.*;
-import com.github.javaparser.ast.stmt.BlockStmt;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
+import com.github.javaparser.utils.Log;
+
+import static com.bsit.codegeneration.util.StringUtils.toCamelCase;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -19,10 +21,34 @@ import java.nio.file.Paths;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.HashMap;
 import java.util.stream.Collectors;
 
 public class JdbiDaoGenerator {
+
+    public static final String STRING = "String";
+
+    private JdbiDaoGenerator(){
+
+    }
+
+    private static final String LIST_INTEGER_TYPE = "List<Integer>";
+    private static final String FIND_BY = "findBy";
+    private static final String REGISTER_BEAN_MAPPER = "RegisterBeanMapper";
+    private static final String SQL_QUERY = "SqlQuery";
+    private static final String LIST_OF_S = "List<%s>";
+    private static final String SQL_BATCH = "SqlBatch";
+    private static final String INT_ARRAY = "int[]";
+    private static final String BIND_BEAN = "BindBean";
+    private static final String GET_GENERATED_KEYS = "GetGeneratedKeys";
+    private static final String SQL_UPDATE = "SqlUpdate";
+
+
 
     private static class ColumnInfo {
         final String columnName;
@@ -79,8 +105,8 @@ public class JdbiDaoGenerator {
     }
 
     public static void generateDao(String tableName, ResultSet columnsRs, DatabaseConfig dbConfig,
-                                   TargetConfig target, DaoConfig daoConfig,
-                                   List<Relationship> relationships, List<Relationship> reverseRelationships)
+                                   TargetConfig target,
+                                   List<Relationship> relationships)
             throws IOException, SQLException {
 
         NamingStrategyConfig naming = dbConfig.getNamingStrategy();
@@ -113,8 +139,8 @@ public class JdbiDaoGenerator {
     }
 
     private static String generateEntityClassName(String tableName, NamingStrategyConfig naming) {
-        String rawClassName = stripPrefix(tableName, naming.getStripPrefixes());
-        return toCamelCase(rawClassName, naming.getUppercaseAcronyms(), true);
+        String rawClassName = stripPrefix(tableName, NamingStrategyConfig.getStripPrefixes());
+        return toCamelCase(rawClassName, NamingStrategyConfig.getUppercaseAcronyms(), true);
     }
 
     private static CompilationUnit createCompilationUnit(String entityClassName) {
@@ -228,7 +254,7 @@ public class JdbiDaoGenerator {
                 }
 
             } catch (SQLException e) {
-                System.err.println("Error reading column data: " + e.getMessage());
+                Log.info("Error reading column data: " + e.getMessage());
                 continue; // Skip this column and continue with next
             }
 
@@ -288,17 +314,17 @@ public class JdbiDaoGenerator {
                                             NamingStrategyConfig naming, String entityClassName) {
 
         // Generate single record CRUD methods
-        generateInsert(dao, metadata, entityClassName, naming);
+        generateInsert(dao, metadata, entityClassName);
         generateFindById(dao, metadata, entityClassName);
-        generateFindAllMethods(dao, metadata, entityClassName, naming);
-        generateUpdate(dao, metadata, entityClassName, naming);
+        generateFindAllMethods(dao, metadata, entityClassName);
+        generateUpdate(dao, metadata, entityClassName);
         generateDeleteById(dao, metadata);
         generateCountAll(dao, metadata.tableName);
 
         // Generate bulk operations
-        generateBulkInsert(dao, metadata, entityClassName, naming);
-        generateBulkUpdate(dao, metadata, entityClassName, naming);
-        generateBulkDelete(dao, metadata, entityClassName, naming);
+        generateBulkInsert(dao, metadata, entityClassName);
+        generateBulkUpdate(dao, metadata, entityClassName);
+        generateBulkDelete(dao, metadata);
 
         // Generate additional bulk helpers
         generateBulkFindByIds(dao, metadata, entityClassName);
@@ -308,7 +334,7 @@ public class JdbiDaoGenerator {
     }
 
     private static void generateInsert(ClassOrInterfaceDeclaration dao, TableMetadata metadata,
-                                       String entityClassName, NamingStrategyConfig naming) {
+                                       String entityClassName) {
 
         List<ColumnInfo> insertColumns = metadata.columns.stream()
                 .filter(c -> !c.isGenerated && !(metadata.hasAutoPk && c.isPrimaryKey))
@@ -323,7 +349,7 @@ public class JdbiDaoGenerator {
                 .collect(Collectors.joining(", "));
 
         String valuesList = insertColumns.stream()
-                .map(c -> ":" + toCamelCase(c.columnName, naming.getUppercaseAcronyms(), false))
+                .map(c -> ":" + toCamelCase(c.columnName, NamingStrategyConfig.getUppercaseAcronyms(), false))
                 .collect(Collectors.joining(", "));
 
         String sql = String.format("INSERT INTO %s (%s) VALUES (%s)",
@@ -337,11 +363,11 @@ public class JdbiDaoGenerator {
 
         // Add SQL annotation
         method.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlUpdate"), new StringLiteralExpr(sql)));
+                new Name(SQL_UPDATE), new StringLiteralExpr(sql)));
 
         // Add GetGeneratedKeys if needed
         if (metadata.hasAutoPk) {
-            method.addMarkerAnnotation("GetGeneratedKeys");
+            method.addMarkerAnnotation(GET_GENERATED_KEYS);
         }
 
         // Add parameters
@@ -349,12 +375,12 @@ public class JdbiDaoGenerator {
             // Use @BindBean for complex objects
             method.addParameter(new Parameter()
                     .setType(entityClassName)
-                    .setName(toCamelCase(entityClassName, naming.getUppercaseAcronyms(), false))
-                    .addMarkerAnnotation("BindBean"));
+                    .setName(toCamelCase(entityClassName, NamingStrategyConfig.getUppercaseAcronyms(), false))
+                    .addMarkerAnnotation(BIND_BEAN));
         } else {
             // Use individual @Bind for simple cases
             for (ColumnInfo col : insertColumns) {
-                String paramName = toCamelCase(col.columnName, naming.getUppercaseAcronyms(), false);
+                String paramName = toCamelCase(col.columnName, NamingStrategyConfig.getUppercaseAcronyms(), false);
                 method.addParameter(new Parameter()
                         .setType(col.javaType)
                         .setName(paramName)
@@ -368,11 +394,11 @@ public class JdbiDaoGenerator {
 
     // NEW: Generate bulk insert methods
     private static void generateBulkInsert(ClassOrInterfaceDeclaration dao, TableMetadata metadata,
-                                           String entityClassName, NamingStrategyConfig naming) {
+                                           String entityClassName) {
 
         List<ColumnInfo> insertColumns = metadata.columns.stream()
                 .filter(c -> !c.isGenerated && !(metadata.hasAutoPk && c.isPrimaryKey))
-                .collect(Collectors.toList());
+                .toList();
 
         if (insertColumns.isEmpty()) {
             return; // No columns to insert
@@ -383,7 +409,7 @@ public class JdbiDaoGenerator {
                 .collect(Collectors.joining(", "));
 
         String valuesList = insertColumns.stream()
-                .map(c -> ":" + toCamelCase(c.columnName, naming.getUppercaseAcronyms(), false))
+                .map(c -> ":" + toCamelCase(c.columnName, NamingStrategyConfig.getUppercaseAcronyms(), false))
                 .collect(Collectors.joining(", "));
 
         String sql = String.format("INSERT INTO %s (%s) VALUES (%s)",
@@ -391,44 +417,44 @@ public class JdbiDaoGenerator {
 
         // Method 1: Bulk insert with entity list
         MethodDeclaration bulkInsertEntities = dao.addMethod("bulkInsert", Modifier.Keyword.PUBLIC);
-        bulkInsertEntities.setType(metadata.hasAutoPk ? metadata.primaryKeyType + "[]" : "int[]");
+        bulkInsertEntities.setType(metadata.hasAutoPk ? metadata.primaryKeyType + "[]" : INT_ARRAY);
 
         bulkInsertEntities.setJavadocComment("Bulk insert multiple " + entityClassName + " entities" +
                 (metadata.hasAutoPk ? " and returns generated IDs." : " and returns affected row counts."));
 
         bulkInsertEntities.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlBatch"), new StringLiteralExpr(sql)));
+                new Name(SQL_BATCH), new StringLiteralExpr(sql)));
 
         if (metadata.hasAutoPk) {
-            bulkInsertEntities.addMarkerAnnotation("GetGeneratedKeys");
+            bulkInsertEntities.addMarkerAnnotation(GET_GENERATED_KEYS);
         }
 
         bulkInsertEntities.addParameter(new Parameter()
-                .setType(String.format("List<%s>", entityClassName))
-                .setName(toCamelCase(entityClassName, naming.getUppercaseAcronyms(), false) + "s")
-                .addMarkerAnnotation("BindBean"));
+                .setType(String.format(LIST_OF_S, entityClassName))
+                .setName(toCamelCase(entityClassName, NamingStrategyConfig.getUppercaseAcronyms(), false) + "s")
+                .addMarkerAnnotation(BIND_BEAN));
 
         bulkInsertEntities.setBody(null);
 
         // Method 2: Bulk insert with individual parameter lists (for simple cases)
         if (insertColumns.size() <= 3) {
             MethodDeclaration bulkInsertParams = dao.addMethod("bulkInsertParams", Modifier.Keyword.PUBLIC);
-            bulkInsertParams.setType(metadata.hasAutoPk ? metadata.primaryKeyType + "[]" : "int[]");
+            bulkInsertParams.setType(metadata.hasAutoPk ? metadata.primaryKeyType + "[]" : INT_ARRAY);
 
             bulkInsertParams.setJavadocComment("Bulk insert with individual parameter lists" +
                     (metadata.hasAutoPk ? " and returns generated IDs." : " and returns affected row counts."));
 
             bulkInsertParams.addAnnotation(new SingleMemberAnnotationExpr(
-                    new Name("SqlBatch"), new StringLiteralExpr(sql)));
+                    new Name(SQL_BATCH), new StringLiteralExpr(sql)));
 
             if (metadata.hasAutoPk) {
-                bulkInsertParams.addMarkerAnnotation("GetGeneratedKeys");
+                bulkInsertParams.addMarkerAnnotation(GET_GENERATED_KEYS);
             }
 
             for (ColumnInfo col : insertColumns) {
-                String paramName = toCamelCase(col.columnName, naming.getUppercaseAcronyms(), false);
+                String paramName = toCamelCase(col.columnName, NamingStrategyConfig.getUppercaseAcronyms(), false);
                 bulkInsertParams.addParameter(new Parameter()
-                        .setType(String.format("List<%s>", getWrapperType(col.javaType)))
+                        .setType(String.format(LIST_OF_S, getWrapperType(col.javaType)))
                         .setName(paramName + "s")
                         .addAnnotation(new SingleMemberAnnotationExpr(
                                 new Name("Bind"), new StringLiteralExpr(paramName))));
@@ -440,7 +466,7 @@ public class JdbiDaoGenerator {
 
     // NEW: Generate bulk update methods
     private static void generateBulkUpdate(ClassOrInterfaceDeclaration dao, TableMetadata metadata,
-                                           String entityClassName, NamingStrategyConfig naming) {
+                                           String entityClassName) {
 
         List<ColumnInfo> updateColumns = metadata.columns.stream()
                 .filter(c -> !c.isGenerated && !c.isPrimaryKey)
@@ -451,7 +477,7 @@ public class JdbiDaoGenerator {
         }
 
         String setClause = updateColumns.stream()
-                .map(c -> c.columnName + " = :" + toCamelCase(c.columnName, naming.getUppercaseAcronyms(), false))
+                .map(c -> c.columnName + " = :" + toCamelCase(c.columnName, NamingStrategyConfig.getUppercaseAcronyms(), false))
                 .collect(Collectors.joining(", "));
 
         String sql = String.format("UPDATE %s SET %s WHERE %s = :%s",
@@ -460,35 +486,35 @@ public class JdbiDaoGenerator {
 
         // Method 1: Bulk update with entity list
         MethodDeclaration bulkUpdate = dao.addMethod("bulkUpdate", Modifier.Keyword.PUBLIC);
-        bulkUpdate.setType("int[]");
+        bulkUpdate.setType(INT_ARRAY);
 
         bulkUpdate.setJavadocComment("Bulk update multiple " + entityClassName + " entities and returns affected row counts for each.");
 
         bulkUpdate.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlBatch"), new StringLiteralExpr(sql)));
+                new Name(SQL_BATCH), new StringLiteralExpr(sql)));
 
         bulkUpdate.addParameter(new Parameter()
-                .setType(String.format("List<%s>", entityClassName))
-                .setName(toCamelCase(entityClassName, naming.getUppercaseAcronyms(), false) + "s")
-                .addMarkerAnnotation("BindBean"));
+                .setType(String.format(LIST_OF_S, entityClassName))
+                .setName(toCamelCase(entityClassName, NamingStrategyConfig.getUppercaseAcronyms(), false) + "s")
+                .addMarkerAnnotation(BIND_BEAN));
 
         bulkUpdate.setBody(null);
 
         // Method 2: Bulk update with individual parameter lists (for simple cases)
         if (updateColumns.size() <= 3) {
             MethodDeclaration bulkUpdateParams = dao.addMethod("bulkUpdateParams", Modifier.Keyword.PUBLIC);
-            bulkUpdateParams.setType("int[]");
+            bulkUpdateParams.setType(INT_ARRAY);
 
             bulkUpdateParams.setJavadocComment("Bulk update with individual parameter lists and returns affected row counts for each.");
 
             bulkUpdateParams.addAnnotation(new SingleMemberAnnotationExpr(
-                    new Name("SqlBatch"), new StringLiteralExpr(sql)));
+                    new Name(SQL_BATCH), new StringLiteralExpr(sql)));
 
             // Add update columns parameters
             for (ColumnInfo col : updateColumns) {
-                String paramName = toCamelCase(col.columnName, naming.getUppercaseAcronyms(), false);
+                String paramName = toCamelCase(col.columnName, NamingStrategyConfig.getUppercaseAcronyms(), false);
                 bulkUpdateParams.addParameter(new Parameter()
-                        .setType(String.format("List<%s>", getWrapperType(col.javaType)))
+                        .setType(String.format(LIST_OF_S, getWrapperType(col.javaType)))
                         .setName(paramName + "s")
                         .addAnnotation(new SingleMemberAnnotationExpr(
                                 new Name("Bind"), new StringLiteralExpr(paramName))));
@@ -496,7 +522,7 @@ public class JdbiDaoGenerator {
 
             // Add primary key parameter
             bulkUpdateParams.addParameter(new Parameter()
-                    .setType(String.format("List<%s>", getWrapperType(metadata.primaryKeyType)))
+                    .setType(String.format(LIST_OF_S, getWrapperType(metadata.primaryKeyType)))
                     .setName(metadata.primaryKeyCamel + "s")
                     .addAnnotation(new SingleMemberAnnotationExpr(
                             new Name("Bind"), new StringLiteralExpr(metadata.primaryKeyCamel))));
@@ -506,8 +532,7 @@ public class JdbiDaoGenerator {
     }
 
     // NEW: Generate bulk delete methods
-    private static void generateBulkDelete(ClassOrInterfaceDeclaration dao, TableMetadata metadata,
-                                           String entityClassName, NamingStrategyConfig naming) {
+    private static void generateBulkDelete(ClassOrInterfaceDeclaration dao, TableMetadata metadata) {
 
         // Method 1: Bulk delete by IDs (single query with IN clause)
         MethodDeclaration bulkDeleteByIds = dao.addMethod("bulkDeleteByIds", Modifier.Keyword.PUBLIC);
@@ -519,7 +544,7 @@ public class JdbiDaoGenerator {
                 metadata.tableName, metadata.primaryKeyColumn);
 
         bulkDeleteByIds.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlUpdate"), new StringLiteralExpr(inClauseSql)));
+                new Name(SQL_UPDATE), new StringLiteralExpr(inClauseSql)));
 
         bulkDeleteByIds.addParameter(new Parameter()
                 .setType(String.format("Collection<%s>", getWrapperType(metadata.primaryKeyType)))
@@ -531,7 +556,7 @@ public class JdbiDaoGenerator {
 
         // Method 2: Bulk delete by IDs (batch processing)
         MethodDeclaration bulkDeleteBatch = dao.addMethod("bulkDeleteBatch", Modifier.Keyword.PUBLIC);
-        bulkDeleteBatch.setType("int[]");
+        bulkDeleteBatch.setType(INT_ARRAY);
 
         bulkDeleteBatch.setJavadocComment("Bulk delete multiple records using batch processing and returns affected row counts for each.");
 
@@ -539,10 +564,10 @@ public class JdbiDaoGenerator {
                 metadata.tableName, metadata.primaryKeyColumn);
 
         bulkDeleteBatch.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlBatch"), new StringLiteralExpr(batchSql)));
+                new Name(SQL_BATCH), new StringLiteralExpr(batchSql)));
 
         bulkDeleteBatch.addParameter(new Parameter()
-                .setType(String.format("List<%s>", getWrapperType(metadata.primaryKeyType)))
+                .setType(String.format(LIST_OF_S, getWrapperType(metadata.primaryKeyType)))
                 .setName("ids")
                 .addAnnotation(new SingleMemberAnnotationExpr(
                         new Name("Bind"), new StringLiteralExpr("id"))));
@@ -555,7 +580,7 @@ public class JdbiDaoGenerator {
                                               String entityClassName) {
 
         MethodDeclaration bulkFindByIds = dao.addMethod("findByIds", Modifier.Keyword.PUBLIC);
-        bulkFindByIds.setType(String.format("List<%s>", entityClassName));
+        bulkFindByIds.setType(String.format(LIST_OF_S, entityClassName));
 
         bulkFindByIds.setJavadocComment("Finds multiple " + entityClassName + " records by their IDs.");
 
@@ -563,10 +588,10 @@ public class JdbiDaoGenerator {
                 metadata.tableName, metadata.primaryKeyColumn);
 
         bulkFindByIds.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlQuery"), new StringLiteralExpr(sql)));
+                new Name(SQL_QUERY), new StringLiteralExpr(sql)));
 
         bulkFindByIds.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("RegisterBeanMapper"),
+                new Name(REGISTER_BEAN_MAPPER),
                 new ClassExpr(new ClassOrInterfaceType(null, entityClassName))));
 
         bulkFindByIds.addParameter(new Parameter()
@@ -591,10 +616,10 @@ public class JdbiDaoGenerator {
 
         // Add annotations
         method.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlQuery"), new StringLiteralExpr(sql)));
+                new Name(SQL_QUERY), new StringLiteralExpr(sql)));
 
         method.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("RegisterBeanMapper"),
+                new Name(REGISTER_BEAN_MAPPER),
                 new ClassExpr(new ClassOrInterfaceType(null, entityClassName))));
 
         // Add parameter
@@ -608,13 +633,13 @@ public class JdbiDaoGenerator {
     }
 
     private static void generateFindAllMethods(ClassOrInterfaceDeclaration dao, TableMetadata metadata,
-                                               String entityClassName, NamingStrategyConfig naming) {
+                                               String entityClassName) {
 
         // Generate standard findAll method (no parameters)
         generateStandardFindAll(dao, metadata.tableName, entityClassName);
 
         // Generate paginated findAll method
-        generatePaginatedFindAll(dao, metadata, entityClassName, naming);
+        generatePaginatedFindAll(dao, metadata, entityClassName);
     }
 
     private static void generateStandardFindAll(ClassOrInterfaceDeclaration dao, String tableName,
@@ -622,46 +647,46 @@ public class JdbiDaoGenerator {
         String sql = "SELECT * FROM " + tableName;
 
         MethodDeclaration method = dao.addMethod("findAll", Modifier.Keyword.PUBLIC);
-        method.setType(String.format("List<%s>", entityClassName));
+        method.setType(String.format(LIST_OF_S, entityClassName));
 
         // Add Javadoc
         method.setJavadocComment("Retrieves all records from the table. Use with caution for large tables.");
 
         // Add annotations
         method.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlQuery"), new StringLiteralExpr(sql)));
+                new Name(SQL_QUERY), new StringLiteralExpr(sql)));
 
         method.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("RegisterBeanMapper"),
+                new Name(REGISTER_BEAN_MAPPER),
                 new ClassExpr(new ClassOrInterfaceType(null, entityClassName))));
 
         method.setBody(null);
     }
 
     private static void generatePaginatedFindAll(ClassOrInterfaceDeclaration dao, TableMetadata metadata,
-                                                 String entityClassName, NamingStrategyConfig naming) {
+                                                 String entityClassName) {
 
         // Determine the primary ordering column (prefer primary key or first column)
         String orderByColumn = metadata.primaryKeyColumn;
         if (orderByColumn == null && !metadata.columns.isEmpty()) {
-            orderByColumn = metadata.columns.get(0).columnName;
+            orderByColumn = metadata.columns.getFirst().columnName;
         }
 
         String sql = String.format("SELECT * FROM %s ORDER BY %s LIMIT :limit OFFSET :offset",
                 metadata.tableName, orderByColumn != null ? orderByColumn : "1");
 
         MethodDeclaration method = dao.addMethod("findAllPaged", Modifier.Keyword.PUBLIC);
-        method.setType(String.format("List<%s>", entityClassName));
+        method.setType(String.format(LIST_OF_S, entityClassName));
 
         // Add Javadoc
         method.setJavadocComment("Retrieves paginated records from the table.");
 
         // Add annotations
         method.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlQuery"), new StringLiteralExpr(sql)));
+                new Name(SQL_QUERY), new StringLiteralExpr(sql)));
 
         method.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("RegisterBeanMapper"),
+                new Name(REGISTER_BEAN_MAPPER),
                 new ClassExpr(new ClassOrInterfaceType(null, entityClassName))));
 
         // Add pagination parameters
@@ -690,13 +715,13 @@ public class JdbiDaoGenerator {
         method.setJavadocComment("Returns the total count of records in the table.");
 
         method.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlQuery"), new StringLiteralExpr(sql)));
+                new Name(SQL_QUERY), new StringLiteralExpr(sql)));
 
         method.setBody(null);
     }
 
     private static void generateUpdate(ClassOrInterfaceDeclaration dao, TableMetadata metadata,
-                                       String entityClassName, NamingStrategyConfig naming) {
+                                       String entityClassName) {
 
         List<ColumnInfo> updateColumns = metadata.columns.stream()
                 .filter(c -> !c.isGenerated && !c.isPrimaryKey)
@@ -707,7 +732,7 @@ public class JdbiDaoGenerator {
         }
 
         String setClause = updateColumns.stream()
-                .map(c -> c.columnName + " = :" + toCamelCase(c.columnName, naming.getUppercaseAcronyms(), false))
+                .map(c -> c.columnName + " = :" + toCamelCase(c.columnName, NamingStrategyConfig.getUppercaseAcronyms(), false))
                 .collect(Collectors.joining(", "));
 
         String sql = String.format("UPDATE %s SET %s WHERE %s = :%s",
@@ -722,13 +747,13 @@ public class JdbiDaoGenerator {
 
         // Add SQL annotation
         method.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlUpdate"), new StringLiteralExpr(sql)));
+                new Name(SQL_UPDATE), new StringLiteralExpr(sql)));
 
         // Add parameter
         method.addParameter(new Parameter()
                 .setType(entityClassName)
-                .setName(toCamelCase(entityClassName, naming.getUppercaseAcronyms(), false))
-                .addMarkerAnnotation("BindBean"));
+                .setName(toCamelCase(entityClassName, NamingStrategyConfig.getUppercaseAcronyms(), false))
+                .addMarkerAnnotation(BIND_BEAN));
 
         method.setBody(null);
     }
@@ -745,7 +770,7 @@ public class JdbiDaoGenerator {
 
         // Add SQL annotation
         method.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlUpdate"), new StringLiteralExpr(sql)));
+                new Name(SQL_UPDATE), new StringLiteralExpr(sql)));
 
         // Add parameter
         method.addParameter(new Parameter()
@@ -762,24 +787,24 @@ public class JdbiDaoGenerator {
 
         for (Relationship relationship : metadata.relationships.values()) {
             String fkColumn = relationship.getFkColumn();
-            String fkCamel = toCamelCase(fkColumn, naming.getUppercaseAcronyms(), false);
-            String methodName = "findBy" + toCamelCase(fkColumn, naming.getUppercaseAcronyms(), true);
+            String fkCamel = toCamelCase(fkColumn, NamingStrategyConfig.getUppercaseAcronyms(), false);
+            String methodName = FIND_BY + toCamelCase(fkColumn, NamingStrategyConfig.getUppercaseAcronyms(), true);
 
             String sql = String.format("SELECT * FROM %s WHERE %s = :%s",
                     metadata.tableName, fkColumn, fkCamel);
 
             MethodDeclaration method = dao.addMethod(methodName, Modifier.Keyword.PUBLIC);
-            method.setType(String.format("List<%s>", entityClassName));
+            method.setType(String.format(LIST_OF_S, entityClassName));
 
             // Add Javadoc
             method.setJavadocComment("Finds all " + entityClassName + " records by " + fkCamel + ".");
 
             // Add annotations
             method.addAnnotation(new SingleMemberAnnotationExpr(
-                    new Name("SqlQuery"), new StringLiteralExpr(sql)));
+                    new Name(SQL_QUERY), new StringLiteralExpr(sql)));
 
             method.addAnnotation(new SingleMemberAnnotationExpr(
-                    new Name("RegisterBeanMapper"),
+                    new Name(REGISTER_BEAN_MAPPER),
                     new ClassExpr(new ClassOrInterfaceType(null, entityClassName))));
 
             // Add parameter
@@ -811,7 +836,7 @@ public class JdbiDaoGenerator {
         generateJoinFinders(dao, metadata.tableName, entityClassName, rel1, rel2, naming);
 
         // Generate delete method
-        generateJoinDelete(dao, metadata.tableName, rel1, rel2, naming, entityClassName);
+        generateJoinDelete(dao, metadata.tableName, rel1, rel2, naming);
 
         // Generate bulk operations for join tables
         generateJoinBulkOperations(dao, metadata.tableName, rel1, rel2, naming, entityClassName);
@@ -820,8 +845,8 @@ public class JdbiDaoGenerator {
     private static void generateJoinInsert(ClassOrInterfaceDeclaration dao, String tableName,
                                            Relationship rel1, Relationship rel2, NamingStrategyConfig naming,
                                            String entityClassName) {
-        String fk1Camel = toCamelCase(rel1.getFkColumn(), naming.getUppercaseAcronyms(), false);
-        String fk2Camel = toCamelCase(rel2.getFkColumn(), naming.getUppercaseAcronyms(), false);
+        String fk1Camel = toCamelCase(rel1.getFkColumn(), NamingStrategyConfig.getUppercaseAcronyms(), false);
+        String fk2Camel = toCamelCase(rel2.getFkColumn(), NamingStrategyConfig.getUppercaseAcronyms(), false);
 
         String sql = String.format("INSERT INTO %s (%s, %s) VALUES (:%s, :%s)",
                 tableName, rel1.getFkColumn(), rel2.getFkColumn(), fk1Camel, fk2Camel);
@@ -833,7 +858,7 @@ public class JdbiDaoGenerator {
         method.setJavadocComment("Inserts a new join record and returns the number of affected rows.");
 
         method.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlUpdate"), new StringLiteralExpr(sql)));
+                new Name(SQL_UPDATE), new StringLiteralExpr(sql)));
 
         method.addParameter(new Parameter()
                 .setType("int")
@@ -854,29 +879,29 @@ public class JdbiDaoGenerator {
     private static void generateJoinBulkOperations(ClassOrInterfaceDeclaration dao, String tableName,
                                                    Relationship rel1, Relationship rel2, NamingStrategyConfig naming,
                                                    String entityClassName) {
-        String fk1Camel = toCamelCase(rel1.getFkColumn(), naming.getUppercaseAcronyms(), false);
-        String fk2Camel = toCamelCase(rel2.getFkColumn(), naming.getUppercaseAcronyms(), false);
+        String fk1Camel = toCamelCase(rel1.getFkColumn(), NamingStrategyConfig.getUppercaseAcronyms(), false);
+        String fk2Camel = toCamelCase(rel2.getFkColumn(), NamingStrategyConfig.getUppercaseAcronyms(), false);
 
         // Bulk insert for join table
         String sql = String.format("INSERT INTO %s (%s, %s) VALUES (:%s, :%s)",
                 tableName, rel1.getFkColumn(), rel2.getFkColumn(), fk1Camel, fk2Camel);
 
         MethodDeclaration bulkInsert = dao.addMethod("bulkInsert", Modifier.Keyword.PUBLIC);
-        bulkInsert.setType("int[]");
+        bulkInsert.setType(INT_ARRAY);
 
         bulkInsert.setJavadocComment("Bulk insert join records and returns affected row counts for each.");
 
         bulkInsert.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlBatch"), new StringLiteralExpr(sql)));
+                new Name(SQL_BATCH), new StringLiteralExpr(sql)));
 
         bulkInsert.addParameter(new Parameter()
-                .setType("List<Integer>")
+                .setType(LIST_INTEGER_TYPE)
                 .setName(fk1Camel + "s")
                 .addAnnotation(new SingleMemberAnnotationExpr(
                         new Name("Bind"), new StringLiteralExpr(fk1Camel))));
 
         bulkInsert.addParameter(new Parameter()
-                .setType("List<Integer>")
+                .setType(LIST_INTEGER_TYPE)
                 .setName(fk2Camel + "s")
                 .addAnnotation(new SingleMemberAnnotationExpr(
                         new Name("Bind"), new StringLiteralExpr(fk2Camel))));
@@ -888,21 +913,21 @@ public class JdbiDaoGenerator {
                 tableName, rel1.getFkColumn(), fk1Camel, rel2.getFkColumn(), fk2Camel);
 
         MethodDeclaration bulkDelete = dao.addMethod("bulkDelete", Modifier.Keyword.PUBLIC);
-        bulkDelete.setType("int[]");
+        bulkDelete.setType(INT_ARRAY);
 
         bulkDelete.setJavadocComment("Bulk delete join records and returns affected row counts for each.");
 
         bulkDelete.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlBatch"), new StringLiteralExpr(deleteSql)));
+                new Name(SQL_BATCH), new StringLiteralExpr(deleteSql)));
 
         bulkDelete.addParameter(new Parameter()
-                .setType("List<Integer>")
+                .setType(LIST_INTEGER_TYPE)
                 .setName(fk1Camel + "s")
                 .addAnnotation(new SingleMemberAnnotationExpr(
                         new Name("Bind"), new StringLiteralExpr(fk1Camel))));
 
         bulkDelete.addParameter(new Parameter()
-                .setType("List<Integer>")
+                .setType(LIST_INTEGER_TYPE)
                 .setName(fk2Camel + "s")
                 .addAnnotation(new SingleMemberAnnotationExpr(
                         new Name("Bind"), new StringLiteralExpr(fk2Camel))));
@@ -914,18 +939,18 @@ public class JdbiDaoGenerator {
                                             String entityClassName, Relationship rel1, Relationship rel2,
                                             NamingStrategyConfig naming) {
 
-        String fk1Camel = toCamelCase(rel1.getFkColumn(), naming.getUppercaseAcronyms(), false);
-        String fk2Camel = toCamelCase(rel2.getFkColumn(), naming.getUppercaseAcronyms(), false);
-        String rel1Class = toCamelCase(rel1.getRelatedTable(), naming.getUppercaseAcronyms(), true);
-        String rel2Class = toCamelCase(rel2.getRelatedTable(), naming.getUppercaseAcronyms(), true);
+        String fk1Camel = toCamelCase(rel1.getFkColumn(), NamingStrategyConfig.getUppercaseAcronyms(), false);
+        String fk2Camel = toCamelCase(rel2.getFkColumn(), NamingStrategyConfig.getUppercaseAcronyms(), false);
+        String rel1Class = toCamelCase(rel1.getRelatedTable(), NamingStrategyConfig.getUppercaseAcronyms(), true);
+        String rel2Class = toCamelCase(rel2.getRelatedTable(), NamingStrategyConfig.getUppercaseAcronyms(), true);
 
         // Find by first FK
         generateJoinFinder(dao, tableName, entityClassName, rel1.getFkColumn(),
-                fk1Camel, "findBy" + rel1Class + "Id");
+                fk1Camel, FIND_BY + rel1Class + "Id");
 
         // Find by second FK
         generateJoinFinder(dao, tableName, entityClassName, rel2.getFkColumn(),
-                fk2Camel, "findBy" + rel2Class + "Id");
+                fk2Camel, FIND_BY + rel2Class + "Id");
     }
 
     private static void generateJoinFinder(ClassOrInterfaceDeclaration dao, String tableName,
@@ -934,16 +959,16 @@ public class JdbiDaoGenerator {
         String sql = String.format("SELECT * FROM %s WHERE %s = :%s", tableName, fkColumn, paramName);
 
         MethodDeclaration method = dao.addMethod(methodName, Modifier.Keyword.PUBLIC);
-        method.setType(String.format("List<%s>", entityClassName));
+        method.setType(String.format(LIST_OF_S, entityClassName));
 
         // Add Javadoc
         method.setJavadocComment("Finds join records by " + paramName + ".");
 
         method.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlQuery"), new StringLiteralExpr(sql)));
+                new Name(SQL_QUERY), new StringLiteralExpr(sql)));
 
         method.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("RegisterBeanMapper"),
+                new Name(REGISTER_BEAN_MAPPER),
                 new ClassExpr(new ClassOrInterfaceType(null, entityClassName))));
 
         method.addParameter(new Parameter()
@@ -956,10 +981,9 @@ public class JdbiDaoGenerator {
     }
 
     private static void generateJoinDelete(ClassOrInterfaceDeclaration dao, String tableName,
-                                           Relationship rel1, Relationship rel2, NamingStrategyConfig naming,
-                                           String entityClassName) {
-        String fk1Camel = toCamelCase(rel1.getFkColumn(), naming.getUppercaseAcronyms(), false);
-        String fk2Camel = toCamelCase(rel2.getFkColumn(), naming.getUppercaseAcronyms(), false);
+                                           Relationship rel1, Relationship rel2, NamingStrategyConfig naming) {
+        String fk1Camel = toCamelCase(rel1.getFkColumn(), NamingStrategyConfig.getUppercaseAcronyms(), false);
+        String fk2Camel = toCamelCase(rel2.getFkColumn(), NamingStrategyConfig.getUppercaseAcronyms(), false);
 
         String sql = String.format("DELETE FROM %s WHERE %s = :%s AND %s = :%s",
                 tableName, rel1.getFkColumn(), fk1Camel, rel2.getFkColumn(), fk2Camel);
@@ -971,7 +995,7 @@ public class JdbiDaoGenerator {
         method.setJavadocComment("Deletes a join record and returns the number of affected rows.");
 
         method.addAnnotation(new SingleMemberAnnotationExpr(
-                new Name("SqlUpdate"), new StringLiteralExpr(sql)));
+                new Name(SQL_UPDATE), new StringLiteralExpr(sql)));
 
         method.addParameter(new Parameter()
                 .setType("int")
@@ -1004,9 +1028,9 @@ public class JdbiDaoGenerator {
     }
 
     private static void logTableInfo(TableMetadata metadata) {
-        System.out.println("Table: " + metadata.tableName + ", Columns: " + metadata.columns);
-        System.out.println("Primary Key: " + metadata.primaryKeyColumn + " (" + metadata.primaryKeyType + ")");
-        System.out.println("Relationships: " + metadata.relationships.values());
+        Log.info("Table: " + metadata.tableName + ", Columns: " + metadata.columns);
+        Log.info("Primary Key: " + metadata.primaryKeyColumn + " (" + metadata.primaryKeyType + ")");
+        Log.info("Relationships: " + metadata.relationships.values());
     }
 
     private static void writeToFile(CompilationUnit cu, TargetConfig target, String daoClassName)
@@ -1031,30 +1055,6 @@ public class JdbiDaoGenerator {
         return name;
     }
 
-    private static String toCamelCase(String name, List<String> acronyms, boolean capitalizeFirst) {
-        if (name == null || name.isEmpty()) return name != null ? name : "";
-
-        String[] parts = name.toLowerCase().split("_");
-        StringBuilder result = new StringBuilder();
-
-        for (int i = 0; i < parts.length; i++) {
-            String part = parts[i];
-            if (part.isEmpty()) continue;
-
-            if (acronyms != null && acronyms.contains(part.toUpperCase()) && !part.equalsIgnoreCase("id")) {
-                result.append(part.toUpperCase());
-            } else if (i == 0 && !capitalizeFirst) {
-                result.append(part);
-            } else {
-                result.append(Character.toUpperCase(part.charAt(0)));
-                if (part.length() > 1) {
-                    result.append(part.substring(1));
-                }
-            }
-        }
-        return result.toString();
-    }
-
     private static String mapDbTypeToJava(String dbType, String columnName, Set<String> fkColumns) {
         // Force int for foreign keys and ID columns
         if (columnName != null && (columnName.toLowerCase().endsWith("_id") ||
@@ -1062,23 +1062,21 @@ public class JdbiDaoGenerator {
             return "int";
         }
 
-        if (dbType == null) return "String";
+        if (dbType == null) return STRING;
 
         return switch (dbType.toUpperCase()) {
-            case "VARCHAR", "VARCHAR2", "CHAR", "TEXT", "CLOB", "NVARCHAR", "NCHAR", "NCLOB" -> "String";
-            case "NUMBER" -> {
-                // Oracle NUMBER - default to BigDecimal for safety
-                yield "java.math.BigDecimal";
-            }
+            case "VARCHAR", "VARCHAR2", "CHAR", "TEXT", "CLOB", "NVARCHAR", "NCHAR", "NCLOB" -> STRING;
+            case "NUMBER" -> // Oracle NUMBER - default to BigDecimal for safety
+                    "java.math.BigDecimal";
             case "DECIMAL", "NUMERIC", "FLOAT", "DOUBLE", "BINARY_DOUBLE", "BINARY_FLOAT" -> "java.math.BigDecimal";
             case "INT", "INTEGER", "SMALLINT", "SERIAL" -> "int";
             case "BIGINT", "BIGSERIAL" -> "long";
             case "DATE", "DATETIME", "TIMESTAMP", "TIMESTAMPTZ", "TIMESTAMP WITH TIME ZONE",
                  "TIMESTAMP WITH LOCAL TIME ZONE" -> "java.sql.Timestamp";
             case "BOOLEAN", "BOOL" -> "boolean";
-            case "JSON", "JSONB" -> "String";
+            case "JSON", "JSONB" -> STRING;
             case "BLOB", "RAW", "LONG RAW" -> "byte[]";
-            default -> "String";
+            default -> STRING;
         };
     }
 

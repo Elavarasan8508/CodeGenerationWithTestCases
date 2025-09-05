@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.DisplayName;
 import static org.junit.jupiter.api.Assertions.*;
 import com.bsit.codegeneration.pojo.Customer;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import com.bsit.codegeneration.pojo.Address;
 import com.bsit.codegeneration.pojo.Store;
@@ -29,7 +30,7 @@ public class CustomerTest {
 
     private static final Boolean active = false;
 
-    private static final java.time.LocalDateTime createdate = LocalDateTime.of(2023, 8, 8, 10, 30, 0);
+    private static final java.time.LocalDate createdate = LocalDate.of(2023, 8, 8);
 
     private static final java.time.LocalDateTime lastupdate = LocalDateTime.of(2023, 9, 9, 10, 30, 0);
 

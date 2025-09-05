@@ -20,9 +20,21 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.*;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Set;
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.HashSet;
+import java.util.Arrays;
+import java.util.Optional;
 
 public class PojoTestGenerator {
+
+    private PojoTestGenerator(){}
+
+    private static final String RELATED_LIST = "relatedList";
+    private static final String HASH_CODE = "hashCode";
 
     public static void generateDtoTest(
             String tableName,
@@ -196,63 +208,89 @@ public class PojoTestGenerator {
     }
 
     private static SourceDtoInfo analyzeDtoSource(String dtoClassName, TargetConfig target) {
-        List<String> candidateRoots = new ArrayList<>();
-        if (target != null && target.getOutputDirectory() != null) {
-            candidateRoots.add(target.getOutputDirectory());
-        }
-        candidateRoots.add("src/main/java");
-        candidateRoots.add("src");
-
-        String basePkgPath = (target != null && target.getBasePackage() != null)
-                ? target.getBasePackage().replace('.', '/')
-                : "com/bsit/codegeneration";
+        List<String> candidateRoots = getCandidateRoots(target);
+        String basePkgPath = getBasePackagePath(target);
 
         for (String root : candidateRoots) {
             if (root == null) continue;
             Path candidate = Paths.get(root, basePkgPath, "pojo", dtoClassName + ".java");
             if (Files.exists(candidate)) {
-                try {
-                    CompilationUnit dtoCu = StaticJavaParser.parse(candidate);
-                    Optional<ClassOrInterfaceDeclaration> clsOpt = dtoCu.getClassByName(dtoClassName);
-                    if (clsOpt.isPresent()) {
-                        ClassOrInterfaceDeclaration cls = clsOpt.get();
-                        SourceDtoInfo info = new SourceDtoInfo();
-
-                        for (BodyDeclaration<?> member : cls.getMembers()) {
-                            if (!(member instanceof FieldDeclaration)) continue;
-                            FieldDeclaration fd = (FieldDeclaration) member;
-                            for (VariableDeclarator var : fd.getVariables()) {
-                                info.fields.put(var.getNameAsString(), var.getType().toString());
-                            }
-                        }
-
-                        for (ConstructorDeclaration cd : cls.getConstructors()) {
-                            ConstructorInfo ci = new ConstructorInfo();
-                            cd.getParameters().forEach(p -> {
-                                ci.paramNames.add(p.getNameAsString());
-                                ci.paramTypes.add(p.getType().toString());
-                            });
-                            info.constructors.add(ci);
-                        }
-
-                        for (MethodDeclaration md : cls.getMethods()) {
-                            if (md.getNameAsString().equals("equals") && md.getParameters().size() == 1) {
-                                info.hasEquals = true;
-                            }
-                            if (md.getNameAsString().equals("hashCode") && md.getParameters().isEmpty()) {
-                                info.hasHashCode = true;
-                            }
-                            if (md.getNameAsString().equals("toString") && md.getParameters().isEmpty()) {
-                                info.hasToString = true;
-                            }
-                        }
-                        return info;
-                    }
-                } catch (IOException | ParseProblemException ignored) { }
+                return processJavaFile(candidate, dtoClassName);
             }
         }
         return null;
     }
+
+    private static List<String> getCandidateRoots(TargetConfig target) {
+        List<String> roots = new ArrayList<>();
+        if (target != null && target.getOutputDirectory() != null) {
+            roots.add(target.getOutputDirectory());
+        }
+        roots.add("src/main/java");
+        roots.add("src");
+        return roots;
+    }
+
+    private static String getBasePackagePath(TargetConfig target) {
+        if (target != null && target.getBasePackage() != null) {
+            return target.getBasePackage().replace('.', '/');
+        }
+        return "com/bsit/codegeneration";
+    }
+
+    private static SourceDtoInfo processJavaFile(Path candidate, String dtoClassName) {
+        try {
+            CompilationUnit dtoCu = StaticJavaParser.parse(candidate);
+            Optional<ClassOrInterfaceDeclaration> clsOpt = dtoCu.getClassByName(dtoClassName);
+            if (clsOpt.isPresent()) {
+                return extractDtoInfo(clsOpt.get());
+            }
+        } catch (IOException | ParseProblemException ignored) { }
+        return null;
+    }
+
+    private static SourceDtoInfo extractDtoInfo(ClassOrInterfaceDeclaration cls) {
+        SourceDtoInfo info = new SourceDtoInfo();
+        extractFields(cls, info);
+        extractConstructors(cls, info);
+        extractMethods(cls, info);
+        return info;
+    }
+
+    private static void extractFields(ClassOrInterfaceDeclaration cls, SourceDtoInfo info) {
+        for (BodyDeclaration<?> member : cls.getMembers()) {
+            if (!(member instanceof FieldDeclaration)) continue;
+            FieldDeclaration fd = (FieldDeclaration) member;
+            for (VariableDeclarator var : fd.getVariables()) {
+                info.fields.put(var.getNameAsString(), var.getType().toString());
+            }
+        }
+    }
+
+    private static void extractConstructors(ClassOrInterfaceDeclaration cls, SourceDtoInfo info) {
+        for (ConstructorDeclaration cd : cls.getConstructors()) {
+            ConstructorInfo ci = new ConstructorInfo();
+            cd.getParameters().forEach(p -> {
+                ci.paramNames.add(p.getNameAsString());
+                ci.paramTypes.add(p.getType().toString());
+            });
+            info.constructors.add(ci);
+        }
+    }
+
+    private static void extractMethods(ClassOrInterfaceDeclaration cls, SourceDtoInfo info) {
+        for (MethodDeclaration md : cls.getMethods()) {
+            String methodName = md.getNameAsString();
+            if ("equals".equals(methodName) && md.getParameters().size() == 1) {
+                info.hasEquals = true;
+            } else if (HASH_CODE.equals(methodName) && md.getParameters().isEmpty()) {
+                info.hasHashCode = true;
+            } else if ("toString".equals(methodName) && md.getParameters().isEmpty()) {
+                info.hasToString = true;
+            }
+        }
+    }
+
 
     // ---------- Test generation helpers ----------
 
@@ -547,8 +585,8 @@ public class PojoTestGenerator {
         body.addStatement(new ExpressionStmt(new MethodCallExpr(
                 null, "assertEquals",
                 new NodeList<>(
-                        new MethodCallExpr(new NameExpr("obj1"), "hashCode"),
-                        new MethodCallExpr(new NameExpr("obj2"), "hashCode")))));
+                        new MethodCallExpr(new NameExpr("obj1"), HASH_CODE),
+                        new MethodCallExpr(new NameExpr("obj2"), HASH_CODE)))));
 
         m.setBody(body);
     }
@@ -685,12 +723,12 @@ public class PojoTestGenerator {
             body.addStatement(new ExpressionStmt(new VariableDeclarationExpr(
                     new VariableDeclarator(
                             new ClassOrInterfaceType(null, "List<" + relatedDto + ">"),
-                            "relatedList",
+                            RELATED_LIST,
                             init))));
 
             if (!fieldTypes.containsKey(listField)) {
                 body.addStatement(new ExpressionStmt(new MethodCallExpr(
-                        new NameExpr("relatedList"),
+                        new NameExpr(RELATED_LIST),
                         "add",
                         new NodeList<>(new ObjectCreationExpr(null, new ClassOrInterfaceType(null, relatedDto), new NodeList<>())))));
             }
@@ -698,14 +736,14 @@ public class PojoTestGenerator {
             body.addStatement(new ExpressionStmt(new MethodCallExpr(
                     new NameExpr("obj"),
                     "set" + StringUtils.capitalize(listField),
-                    new NodeList<>(new NameExpr("relatedList")))));
+                    new NodeList<>(new NameExpr(RELATED_LIST)))));
 
             body.addStatement(new ExpressionStmt(new MethodCallExpr(
                     null, "assertNotNull",
                     new NodeList<>(new MethodCallExpr(new NameExpr("obj"), "get" + StringUtils.capitalize(listField))))));
             body.addStatement(new ExpressionStmt(new MethodCallExpr(
                     null, "assertEquals",
-                    new NodeList<>(new NameExpr("relatedList"),
+                    new NodeList<>(new NameExpr(RELATED_LIST),
                             new MethodCallExpr(new NameExpr("obj"), "get" + StringUtils.capitalize(listField))))));
 
             m.setBody(body);
@@ -771,8 +809,7 @@ public class PojoTestGenerator {
                 }
                 return "\"TestValue" + counter + "\"";
 
-            case "integer":
-            case "int":
+            case "integer", "int":
                 return String.valueOf(counter * 10);
 
             case "long":

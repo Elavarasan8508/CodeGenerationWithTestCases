@@ -3,21 +3,27 @@ package com.bsit.codegeneration.parser;
 import com.bsit.codegeneration.model.DatabaseConfig;
 import com.bsit.codegeneration.model.TargetConfig;
 import com.bsit.codegeneration.util.StringUtils;
-import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Modifier;
 import com.github.javaparser.ast.body.*;
-import com.github.javaparser.ast.expr.*;
 import com.github.javaparser.ast.stmt.BlockStmt;
 import com.github.javaparser.ast.stmt.ReturnStmt;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.*;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.*;
+import java.util.List;
+import java.util.ArrayList;
+
 
 public class RepositoryGenerator {
+
+    private static final Logger log = LoggerFactory.getLogger(RepositoryGenerator.class);
+
+    private RepositoryGenerator(){}
 
     public static void generateRepository(String tableName, ResultSet columns, DatabaseConfig dbConfig, TargetConfig target) throws SQLException, IOException {
         String rawClassName = StringUtils.stripPrefix(tableName, dbConfig.getNamingStrategy().getStripPrefixes());
@@ -57,13 +63,13 @@ public class RepositoryGenerator {
         repo.addMethod("getAll" + className + "s", Modifier.Keyword.PUBLIC)
                 .setType("List<" + recordClass + ">")
                 .setBody(new BlockStmt().addStatement(
-                        new ReturnStmt("jdbi.withExtension(" + daoClass + ".class, " + daoClass.toLowerCase() + " -> " + daoClass.toLowerCase() + ".findAll())")));
+                        new ReturnStmt("jdbi.withExtension(%s.class, %s -> %s.findAll())".formatted(daoClass, daoClass.toLowerCase(), daoClass.toLowerCase()))));
 
         MethodDeclaration findById = repo.addMethod("get" + className + "ById", Modifier.Keyword.PUBLIC);
         findById.setType("Optional<" + recordClass + ">");
         findById.addParameter(idType, "id");
         findById.setBody(new BlockStmt().addStatement(
-                new ReturnStmt("jdbi.withExtension(" + daoClass + ".class, dao -> dao.findById(id))")));
+                new ReturnStmt("jdbi.withExtension(%s.class, dao -> dao.findById(id))".formatted(daoClass))));
 
         MethodDeclaration create = repo.addMethod("create" + className, Modifier.Keyword.PUBLIC);
         create.setType(idType);
@@ -87,7 +93,7 @@ public class RepositoryGenerator {
         Files.createDirectories(outputPath.getParent());
         Files.writeString(outputPath, cu.toString());
 
-        System.out.println("Generated Repository: " + outputPath);
+        log.info("Generated Repository: {}", outputPath);
     }
 
     // Use your shared StringUtils for string utilities, no method duplication.

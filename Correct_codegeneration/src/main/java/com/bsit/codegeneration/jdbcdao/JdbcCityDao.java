@@ -1,19 +1,22 @@
 package com.bsit.codegeneration.jdbcdao;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.ResultSet;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
-import java.time.LocalDateTime;
-import com.bsit.codegeneration.pojo.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import java.util.Collections;
-import java.util.stream.Collectors;
+import java.sql.Timestamp;
+import com.bsit.codegeneration.pojo.City;
+import com.bsit.codegeneration.pojo.Country;
 
 public class JdbcCityDao {
 
-    private static final Logger logger = LoggerFactory.getLogger(JdbcCityDao.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(JdbcCityDao.class);
 
     private static final String TABLE = "city";
 
@@ -25,22 +28,16 @@ public class JdbcCityDao {
 
     private static final String COL_LAST_UPDATE = "last_update";
 
+    private static final String SELECT_COLUMNS = "city_id, city, country_id, last_update";
+
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s, %s)
         VALUES (?, ?, ?)
         """.formatted(TABLE, COL_CITY, COL_COUNTRY_ID, COL_LAST_UPDATE);
 
-    private static final String SELECT_BY_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("city_id, city, country_id, last_update", TABLE, COL_CITY_ID);
-
     private static final String SELECT_ALL_BASE = """
         SELECT %s FROM %s ORDER BY %s
-        """.formatted("city_id, city, country_id, last_update", TABLE, COL_CITY_ID);
-
-    private static final String SELECT_BY_COUNTRY_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("city_id, city, country_id, last_update", TABLE, COL_COUNTRY_ID);
+        """.formatted(SELECT_COLUMNS, TABLE, COL_CITY_ID);
 
     private static final String UPDATE_SQL = """
         UPDATE %s
@@ -60,8 +57,21 @@ public class JdbcCityDao {
         return chunks;
     }
 
+    private static String getSelectByColumnSql(String column) {
+        return """
+            SELECT %s FROM %s WHERE %s = ?
+            """.formatted(SELECT_COLUMNS, TABLE, column);
+    }
+
+    private static void setNullable(PreparedStatement ps, int index, Object value, int sqlType) throws SQLException {
+        if (value != null)
+            ps.setObject(index, value, sqlType);
+        else
+            ps.setNull(index, sqlType);
+    }
+
     public int insert(Connection conn, City city) throws SQLException {
-        logger.debug("Inserting city: {}", city);
+        LOGGER.debug("Inserting city: {}", city);
         try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
             setCityParams(ps, city);
             ps.executeUpdate();
@@ -71,7 +81,7 @@ public class JdbcCityDao {
                     city.setCityID(id);
                     return id;
                 } else {
-                    logger.error("Failed to retrieve generated ID for inserted city");
+                    LOGGER.error("Failed to retrieve generated ID for inserted city");
                     throw new SQLException("Failed to retrieve generated ID for inserted city");
                 }
             }
@@ -79,11 +89,8 @@ public class JdbcCityDao {
     }
 
     public int[] insertAll(Connection conn, List<City> citys) throws SQLException {
-        if (citys == null || citys.isEmpty())
+        if (isInvalidCityList(citys)) {
             return new int[0];
-        for (int i = 0; i < citys.size(); i++) {
-            if (citys.get(i) == null)
-                throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
         int batchSize = 500;
         List<List<City>> batches = chunkList(citys, batchSize);
@@ -93,31 +100,14 @@ public class JdbcCityDao {
         try {
             conn.setAutoCommit(false);
             for (List<City> batch : batches) {
-                try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-                    for (City city : batch) {
-                        setCityParams(ps, city);
-                        ps.addBatch();
-                    }
-                    int[] results = ps.executeBatch();
-                    System.arraycopy(results, 0, totalResults, resultIndex, results.length);
-                    resultIndex += results.length;
-                    logger.debug("Inserted {} rows in batch", results.length);
-                    try (ResultSet rs = ps.getGeneratedKeys()) {
-                        List<Integer> keys = new ArrayList<>();
-                        while (rs.next()) {
-                            keys.add(rs.getInt(1));
-                        }
-                        for (int i = 0; i < batch.size() && i < keys.size(); i++) {
-                            batch.get(i).setCityID(keys.get(i));
-                        }
-                    }
-                } catch (SQLException e) {
-                }
+                int[] results = processBatch(conn, batch);
+                System.arraycopy(results, 0, totalResults, resultIndex, results.length);
+                resultIndex += results.length;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch insert failed, rolled back", e);
+            LOGGER.error("Batch insert failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
@@ -125,8 +115,40 @@ public class JdbcCityDao {
         return totalResults;
     }
 
+    private boolean isInvalidCityList(List<City> citys) {
+        if (citys == null || citys.isEmpty()) {
+            return true;
+        }
+        for (int i = 0; i < citys.size(); i++) {
+            if (citys.get(i) == null)
+                throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
+        }
+        return false;
+    }
+
+    private int[] processBatch(Connection conn, List<City> batch) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+            for (City city : batch) {
+                setCityParams(ps, city);
+                ps.addBatch();
+            }
+            int[] results = ps.executeBatch();
+            LOGGER.debug("Inserted {} rows in batch", results.length);
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                List<Integer> keys = new ArrayList<>();
+                while (rs.next()) {
+                    keys.add(rs.getInt(1));
+                }
+                for (int i = 0; i < batch.size() && i < keys.size(); i++) {
+                    batch.get(i).setCityID(keys.get(i));
+                }
+            }
+            return results;
+        }
+    }
+
     public City findById(Connection conn, int id) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_CITY_ID))) {
             ps.setInt(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? extract(rs) : null;
@@ -164,13 +186,8 @@ public class JdbcCityDao {
     }
 
     public int[] updateAll(Connection conn, List<City> citys) throws SQLException {
-        if (citys == null || citys.isEmpty())
+        if (isInvalidUpdateCityList(citys)) {
             return new int[0];
-        for (City city : citys) {
-            if (city == null)
-                throw new IllegalArgumentException("Null DTO in batch update");
-            if (city.getCityID() == null)
-                throw new IllegalArgumentException("Null primary key in batch update");
         }
         int batchSize = 500;
         List<List<City>> batches = chunkList(citys, batchSize);
@@ -180,28 +197,48 @@ public class JdbcCityDao {
         try {
             conn.setAutoCommit(false);
             for (List<City> batch : batches) {
-                try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
-                    for (City city : batch) {
-                        setCityParams(ps, city);
-                        ps.setInt(4, city.getCityID());
-                        ps.addBatch();
-                    }
-                    int[] results = ps.executeBatch();
-                    System.arraycopy(results, 0, totalResults, resultIndex, results.length);
-                    resultIndex += results.length;
-                    logger.debug("Updated {} rows in batch", results.length);
-                } catch (SQLException e) {
-                }
+                int[] results = processUpdateBatch(conn, batch);
+                System.arraycopy(results, 0, totalResults, resultIndex, results.length);
+                resultIndex += results.length;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch update failed, rolled back", e);
+            LOGGER.error("Batch update failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
         }
         return totalResults;
+    }
+
+    private boolean isInvalidUpdateCityList(List<City> citys) {
+        if (citys == null || citys.isEmpty()) {
+            return true;
+        }
+        for (City city : citys) {
+            if (city == null)
+                throw new IllegalArgumentException("Null DTO in batch update");
+            if (city.getCityID() == null)
+                throw new IllegalArgumentException("Null primary key in batch update");
+        }
+        return false;
+    }
+
+    private int[] processUpdateBatch(Connection conn, List<City> batch) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
+            for (City city : batch) {
+                setCityParams(ps, city);
+                ps.setInt(4, city.getCityID());
+                ps.addBatch();
+            }
+            int[] results = ps.executeBatch();
+            LOGGER.debug("Updated {} rows in batch", results.length);
+            return results;
+        } catch (SQLException e) {
+            LOGGER.error("Batch update failed", e);
+            throw e;
+        }
     }
 
     public boolean deleteById(Connection conn, int id) throws SQLException {
@@ -212,11 +249,8 @@ public class JdbcCityDao {
     }
 
     public int deleteAllByIds(Connection conn, List<Integer> ids) throws SQLException {
-        if (ids == null || ids.isEmpty())
+        if (isInvalidIdsList(ids)) {
             return 0;
-        for (Integer id : ids) {
-            if (id == null)
-                throw new IllegalArgumentException("Null ID in batch delete");
         }
         int chunkSize = 1000;
         List<List<Integer>> chunks = chunkList(ids, chunkSize);
@@ -225,22 +259,13 @@ public class JdbcCityDao {
         try {
             conn.setAutoCommit(false);
             for (List<Integer> chunk : chunks) {
-                String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
-                String sql = String.format("DELETE FROM %s WHERE %s IN (%s)", TABLE, COL_CITY_ID, placeholders);
-                try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                    for (int i = 0; i < chunk.size(); i++) {
-                        ps.setInt(i + 1, chunk.get(i));
-                    }
-                    int affected = ps.executeUpdate();
-                    totalDeleted += affected;
-                    logger.debug("Deleted {} rows in batch", affected);
-                } catch (SQLException e) {
-                }
+                int affected = processDeleteChunk(conn, chunk);
+                totalDeleted += affected;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch delete failed, rolled back", e);
+            LOGGER.error("Batch delete failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
@@ -248,9 +273,36 @@ public class JdbcCityDao {
         return totalDeleted;
     }
 
+    private boolean isInvalidIdsList(List<Integer> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return true;
+        }
+        for (Integer id : ids) {
+            if (id == null)
+                throw new IllegalArgumentException("Null ID in batch delete");
+        }
+        return false;
+    }
+
+    private int processDeleteChunk(Connection conn, List<Integer> chunk) throws SQLException {
+        String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
+        String sql = String.format("DELETE FROM %s WHERE %s IN (%s)", TABLE, COL_CITY_ID, placeholders);
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < chunk.size(); i++) {
+                ps.setInt(i + 1, chunk.get(i));
+            }
+            int affected = ps.executeUpdate();
+            LOGGER.debug("Deleted {} rows in batch", affected);
+            return affected;
+        } catch (SQLException e) {
+            LOGGER.error("Batch delete failed", e);
+            throw e;
+        }
+    }
+
     public List<City> findByCountryID(Connection conn, int countryID) throws SQLException {
         List<City> list = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_COUNTRY_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_COUNTRY_ID))) {
             ps.setInt(1, countryID);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -262,18 +314,9 @@ public class JdbcCityDao {
     }
 
     private void setCityParams(PreparedStatement ps, City city) throws SQLException {
-        ps.setObject(1, city.getCity(), Types.VARCHAR);
-        if (city.getCountry() != null) {
-            ps.setObject(2, city.getCountry().getCountryID(), Types.INTEGER);
-        } else {
-            ps.setNull(2, Types.INTEGER);
-        }
-        java.time.LocalDateTime val3 = city.getLastUpdate();
-        if (val3 != null) {
-            ps.setObject(3, java.sql.Timestamp.valueOf(val3), Types.TIMESTAMP);
-        } else {
-            ps.setNull(3, Types.TIMESTAMP);
-        }
+        setNullable(ps, 1, city.getCity(), Types.VARCHAR);
+        setNullable(ps, 2, city.getCountry() != null ? city.getCountry().getCountryID() : null, Types.INTEGER);
+        setNullable(ps, 3, city.getLastUpdate() != null ? java.sql.Timestamp.valueOf(city.getLastUpdate()) : null, Types.TIMESTAMP);
     }
 
     private City extract(ResultSet rs) throws SQLException {

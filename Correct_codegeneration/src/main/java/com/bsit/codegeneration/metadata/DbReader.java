@@ -1,9 +1,29 @@
 package com.bsit.codegeneration.metadata;
 
-import java.sql.*;
-import java.util.*;
-import com.bsit.codegeneration.model.*;
-import com.bsit.codegeneration.parser.*;
+import java.io.IOException;
+import java.sql.DriverManager;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.ResultSet;
+import java.sql.DatabaseMetaData;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.HashMap;
+import java.util.Collections;
+import com.bsit.codegeneration.model.DatabaseConfig;
+import com.bsit.codegeneration.model.TargetConfig;
+import com.bsit.codegeneration.model.DtoConfig;
+import com.bsit.codegeneration.model.RecordConfig;
+import com.bsit.codegeneration.model.DaoConfig;
+import com.bsit.codegeneration.model.RepositoryConfig;
+import com.bsit.codegeneration.parser.RecordGenerator;
+import com.bsit.codegeneration.parser.PojoGenerator;
+import com.bsit.codegeneration.parser.JdbiDaoGenerator;
+import com.bsit.codegeneration.parser.JdbcDaoGenerator;
+import com.bsit.codegeneration.parser.RepositoryGenerator;
 import com.bsit.codegeneration.util.Relationship;
 import com.bsit.codegeneration.util.Relationship.Type;
 import org.slf4j.Logger;
@@ -13,6 +33,10 @@ public class DbReader {
 
     private static final Logger logger = LoggerFactory.getLogger(DbReader.class);
     private static final Logger filmLogger = LoggerFactory.getLogger("filmLogger"); // Custom logger for "film" table
+
+    private DbReader(){
+
+    }
 
     public static void readDatabase(DatabaseConfig dbConfig,
                                     TargetConfig target,
@@ -44,9 +68,8 @@ public class DbReader {
                     continue;
                 }
 
-                // Custom logging: Use filmLogger for "film" table (configurable to file), else default logger (console)
                 Logger currentLogger = tableName.equalsIgnoreCase("film") ? filmLogger : logger;
-                currentLogger.info("Reading table: {}", tableName); // Placeholder for efficiency
+                currentLogger.info("Reading table: {}", tableName);
                 count++;
 
                 List<Relationship> relationships = dtoConfig.isIncludeRelationships()
@@ -56,45 +79,64 @@ public class DbReader {
                 List<Relationship> reverseRelationships = dtoConfig.isIncludeReverseRelationships()
                         ? getReverseRelationships(metaData, schema, tableName) : Collections.emptyList();
 
-                try (ResultSet columns = metaData.getColumns(null, schema, tableName, "%")) {
-                    if (dtoConfig.isGenerate()) {
-                        PojoGenerator.generateDto(tableName, columns, dbConfig, target, dtoConfig, relationships, reverseRelationships);
-                    }
-                }
-
-                try (ResultSet columns = metaData.getColumns(null, schema, tableName, "%")) {
-                    if (recordConfig.isGenerate()) {
-                        RecordGenerator.generateRecord(tableName, columns, dbConfig, target, recordConfig, relationships, reverseRelationships);
-                        currentLogger.info("Record generated for: {}", tableName);
-                    }
-                }
-
-                try (ResultSet columns = metaData.getColumns(null, schema, tableName, "%")) {
-                    if (daoConfig.isGenerate()) {
-                        JdbcDaoGenerator.generateDao(tableName, columns, dbConfig, target, dtoConfig, relationships, reverseRelationships);
-                        currentLogger.info("DAO generated for: {}", tableName);
-                    }
-                }
-
-
-                try (ResultSet columns = metaData.getColumns(null, schema, tableName, "%")) {
-                    if (daoConfig.isGenerate()) {
-                        JdbiDaoGenerator.generateDao(tableName, columns, dbConfig, target, daoConfig, relationships, reverseRelationships);
-                        System.out.println(" DAO generated for: " + tableName);
-                    }
-                }
-
-
-                try (ResultSet columns = metaData.getColumns(null, schema, tableName, "%")) {
-                    if (repositoryConfig.isGenerate()) {
-                        RepositoryGenerator.generateRepository(tableName, columns, dbConfig, target);
-                        currentLogger.info("Repository generated for: {}", tableName);
-                    }
-                }
+                processGenerators(tableName, metaData, schema, dbConfig, target, dtoConfig, recordConfig,
+                        daoConfig, repositoryConfig, relationships, reverseRelationships, currentLogger);
             }
 
             logger.info("Total processed tables: {}", count);
             tables.close();
+        }
+    }
+
+    private static void processGenerators(String tableName, DatabaseMetaData metaData, String schema,
+                                          DatabaseConfig dbConfig, TargetConfig target,
+                                          DtoConfig dtoConfig, RecordConfig recordConfig,
+                                          DaoConfig daoConfig, RepositoryConfig repositoryConfig,
+                                          List<Relationship> relationships, List<Relationship> reverseRelationships,
+                                          Logger currentLogger) throws SQLException {
+
+        if (dtoConfig.isGenerate()) {
+            try (ResultSet columns = metaData.getColumns(null, schema, tableName, "%")) {
+                PojoGenerator.generateDto(tableName, columns, dbConfig, target, dtoConfig, relationships, reverseRelationships);
+            } catch (IOException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+
+        if (recordConfig.isGenerate()) {
+            try (ResultSet columns = metaData.getColumns(null, schema, tableName, "%")) {
+                RecordGenerator.generateRecord(tableName, columns, dbConfig, target, recordConfig, relationships, reverseRelationships);
+                currentLogger.info("Record generated for: {}", tableName);
+            } catch (IOException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+
+        if (daoConfig.isGenerate()) {
+            try (ResultSet columns = metaData.getColumns(null, schema, tableName, "%")) {
+                JdbcDaoGenerator.generateDao(tableName, columns, dbConfig, target, relationships);
+                currentLogger.info("DAO generated for: {}", tableName);
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        }
+
+        if (daoConfig.isGenerate()) {
+            try (ResultSet columns = metaData.getColumns(null, schema, tableName, "%")) {
+                JdbiDaoGenerator.generateDao(tableName, columns, dbConfig, target, relationships);
+                currentLogger.info("Jdbi DAO generated for: {}", tableName);
+            } catch (IOException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+
+        if (repositoryConfig.isGenerate()) {
+            try (ResultSet columns = metaData.getColumns(null, schema, tableName, "%")) {
+                RepositoryGenerator.generateRepository(tableName, columns, dbConfig, target);
+                currentLogger.info("Repository generated for: {}", tableName);
+            } catch (IOException e) {
+                throw new IllegalStateException(e);
+            }
         }
     }
 
@@ -130,7 +172,6 @@ public class DbReader {
         DatabaseMetaData metaData = connection.getMetaData();
 
         // Collect table names first
-
         List<String> tableNames = new ArrayList<>();
         try (ResultSet tables = metaData.getTables(null, schema, null, new String[]{"TABLE"})) {
             while (tables.next()) {
@@ -139,7 +180,6 @@ public class DbReader {
         }
 
         // Process each table
-
         Map<String, List<Relationship>> fkRels = new HashMap<>();
         for (String tableName : tableNames) {
             try (ResultSet fks = metaData.getImportedKeys(null, schema, tableName)) {
@@ -162,7 +202,6 @@ public class DbReader {
         }
 
         // Detect MANY_TO_MANY join tables
-
         for (Map.Entry<String, List<Relationship>> entry : fkRels.entrySet()) {
             String joinTable = entry.getKey();
             List<Relationship> rels = entry.getValue();

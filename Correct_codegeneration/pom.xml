@@ -21,7 +21,7 @@
         <slf4j.version>2.0.9</slf4j.version>
     </properties>
 
-    <!-- Dependency Management with JDBI BOM -->
+    <!--  JDBI BOM for version control -->
     <dependencyManagement>
         <dependencies>
             <dependency>
@@ -35,7 +35,7 @@
     </dependencyManagement>
 
     <dependencies>
-        <!-- JDBI Core + SqlObject -->
+        <!--  JDBI Core + SQL Object (includes @SqlBatch) -->
         <dependency>
             <groupId>org.jdbi</groupId>
             <artifactId>jdbi3-core</artifactId>
@@ -45,20 +45,19 @@
             <artifactId>jdbi3-sqlobject</artifactId>
         </dependency>
 
-        <!-- Database Driver -->
+        <!--  Database Drivers -->
         <dependency>
             <groupId>com.oracle.database.jdbc</groupId>
             <artifactId>ojdbc11</artifactId>
             <version>23.2.0.0</version>
         </dependency>
-
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <version>42.7.3</version>
         </dependency>
 
-        <!-- YAML -->
+        <!--  YAML Support -->
         <dependency>
             <groupId>com.fasterxml.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-yaml</artifactId>
@@ -70,7 +69,7 @@
             <version>2.2</version>
         </dependency>
 
-        <!-- Logging -->
+        <!--  Logging -->
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
@@ -82,14 +81,14 @@
             <version>${logback.version}</version>
         </dependency>
 
-        <!-- JavaParser -->
+        <!--  JavaParser -->
         <dependency>
             <groupId>com.github.javaparser</groupId>
             <artifactId>javaparser-core</artifactId>
             <version>3.25.10</version>
         </dependency>
 
-        <!-- JUnit -->
+        <!--  JUnit -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
@@ -100,6 +99,7 @@
 
     <build>
         <plugins>
+            <!--  Code Coverage -->
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>

@@ -3,6 +3,11 @@ package com.bsit.codegeneration.model;
 import java.util.List;
 
 public class DatabaseConfig {
+    private static final String POSTGRES = "POSTGRES";
+    private static final String POSTGRES_SQL = "POSTGRESQL";
+    private static final String MYSQL = "MYSQL";
+    private static final String ORACLE = "ORACLE";
+    
     private String name;
     private String dialect;
     private String driver;
@@ -31,54 +36,55 @@ public class DatabaseConfig {
         this.dialect = dialect;
     }
 
-    // ADD THIS METHOD - derives vendor from dialect
     public String getDatabaseVendor() {
         if (dialect == null) {
             return "";
         }
 
-        String dialectUpper = dialect.toUpperCase();
-
-        if (dialectUpper.contains("POSTGRES") || dialectUpper.contains("POSTGRESQL")) {
-            return "POSTGRESQL";
-        } else if (dialectUpper.contains("MYSQL")) {
-            return "MYSQL";
-        } else if (dialectUpper.contains("ORACLE")) {
-            return "ORACLE";
-        } else if (dialectUpper.contains("H2")) {
-            return "H2";
-        } else if (dialectUpper.contains("MSSQL") || dialectUpper.contains("SQL SERVER") || dialectUpper.contains("SQLSERVER")) {
-            return "MSSQL";
-        } else if (dialectUpper.contains("MARIADB")) {
-            return "MARIADB";
-        } else {
-            // Fallback: try to derive from URL or driver if dialect is ambiguous
-            if (url != null) {
-                String urlUpper = url.toUpperCase();
-                if (urlUpper.contains("POSTGRESQL")) {
-                    return "POSTGRESQL";
-                } else if (urlUpper.contains("MYSQL")) {
-                    return "MYSQL";
-                } else if (urlUpper.contains("ORACLE")) {
-                    return "ORACLE";
-                }
-            }
-
-            if (driver != null) {
-                String driverUpper = driver.toUpperCase();
-                if (driverUpper.contains("POSTGRESQL")) {
-                    return "POSTGRESQL";
-                } else if (driverUpper.contains("MYSQL")) {
-                    return "MYSQL";
-                } else if (driverUpper.contains("ORACLE")) {
-                    return "ORACLE";
-                }
-            }
-
-            // Ultimate fallback - return the dialect as-is
-            return dialectUpper;
+        String vendor = extractVendorFromDialect(dialect.toUpperCase());
+        if (!vendor.isEmpty()) {
+            return vendor;
         }
+
+        vendor = extractVendorFromUrl();
+        if (!vendor.isEmpty()) {
+            return vendor;
+        }
+
+        vendor = extractVendorFromDriver();
+        return vendor.isEmpty() ? dialect.toUpperCase() : vendor;
     }
+
+    private String extractVendorFromDialect(String dialectUpper) {
+        if (dialectUpper.contains(POSTGRES)) return POSTGRES_SQL;
+        if (dialectUpper.contains(MYSQL)) return MYSQL;
+        if (dialectUpper.contains(ORACLE)) return ORACLE;
+        if (dialectUpper.contains("H2")) return "H2";
+        if (dialectUpper.contains("MSSQL") || dialectUpper.contains("SQL SERVER") || dialectUpper.contains("SQLSERVER")) return "MSSQL";
+        if (dialectUpper.contains("MARIADB")) return "MARIADB";
+        return "";
+    }
+
+    private String extractVendorFromUrl() {
+        if (url == null) return "";
+
+        String urlUpper = url.toUpperCase();
+        if (urlUpper.contains(POSTGRES_SQL)) return POSTGRES_SQL;
+        if (urlUpper.contains(MYSQL)) return MYSQL;
+        if (urlUpper.contains(ORACLE)) return ORACLE;
+        return "";
+    }
+
+    private String extractVendorFromDriver() {
+        if (driver == null) return "";
+
+        String driverUpper = driver.toUpperCase();
+        if (driverUpper.contains(POSTGRES_SQL)) return POSTGRES_SQL;
+        if (driverUpper.contains(MYSQL)) return MYSQL;
+        if (driverUpper.contains(ORACLE)) return ORACLE;
+        return "";
+    }
+
 
     public String getDriver() {
         return driver;

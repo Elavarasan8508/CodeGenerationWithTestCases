@@ -11,11 +11,16 @@ import java.io.IOException;
 import java.nio.file.*;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.*;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Set;
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.HashSet;
 
-public class
-RecordGenerator {
+public class RecordGenerator {
 
+    private RecordGenerator(){}
     public static void generateRecord(String tableName, ResultSet columns, DatabaseConfig dbConfig,
                                       TargetConfig target, RecordConfig recordConfig,
                                       List<Relationship> relationships, List<Relationship> reverseRelationships)

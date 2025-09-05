@@ -1,20 +1,25 @@
 package com.bsit.codegeneration.jdbcdao;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.ResultSet;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
-import java.time.LocalDateTime;
-import com.bsit.codegeneration.pojo.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import java.util.Collections;
-import java.util.stream.Collectors;
+import java.sql.Timestamp;
 import java.math.BigDecimal;
+import com.bsit.codegeneration.pojo.Payment;
+import com.bsit.codegeneration.pojo.Rental;
+import com.bsit.codegeneration.pojo.Staff;
+import com.bsit.codegeneration.pojo.Customer;
 
 public class JdbcPaymentDao {
 
-    private static final Logger logger = LoggerFactory.getLogger(JdbcPaymentDao.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(JdbcPaymentDao.class);
 
     private static final String TABLE = "payment";
 
@@ -32,30 +37,16 @@ public class JdbcPaymentDao {
 
     private static final String COL_LAST_UPDATE = "last_update";
 
+    private static final String SELECT_COLUMNS = "payment_id, customer_id, staff_id, rental_id, amount, payment_date, last_update";
+
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s, %s, %s, %s, %s)
         VALUES (?, ?, ?, ?, ?, ?)
         """.formatted(TABLE, COL_CUSTOMER_ID, COL_STAFF_ID, COL_RENTAL_ID, COL_AMOUNT, COL_PAYMENT_DATE, COL_LAST_UPDATE);
 
-    private static final String SELECT_BY_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("payment_id, customer_id, staff_id, rental_id, amount, payment_date, last_update", TABLE, COL_PAYMENT_ID);
-
     private static final String SELECT_ALL_BASE = """
         SELECT %s FROM %s ORDER BY %s
-        """.formatted("payment_id, customer_id, staff_id, rental_id, amount, payment_date, last_update", TABLE, COL_PAYMENT_ID);
-
-    private static final String SELECT_BY_CUSTOMER_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("payment_id, customer_id, staff_id, rental_id, amount, payment_date, last_update", TABLE, COL_CUSTOMER_ID);
-
-    private static final String SELECT_BY_RENTAL_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("payment_id, customer_id, staff_id, rental_id, amount, payment_date, last_update", TABLE, COL_RENTAL_ID);
-
-    private static final String SELECT_BY_STAFF_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("payment_id, customer_id, staff_id, rental_id, amount, payment_date, last_update", TABLE, COL_STAFF_ID);
+        """.formatted(SELECT_COLUMNS, TABLE, COL_PAYMENT_ID);
 
     private static final String UPDATE_SQL = """
         UPDATE %s
@@ -75,8 +66,21 @@ public class JdbcPaymentDao {
         return chunks;
     }
 
+    private static String getSelectByColumnSql(String column) {
+        return """
+            SELECT %s FROM %s WHERE %s = ?
+            """.formatted(SELECT_COLUMNS, TABLE, column);
+    }
+
+    private static void setNullable(PreparedStatement ps, int index, Object value, int sqlType) throws SQLException {
+        if (value != null)
+            ps.setObject(index, value, sqlType);
+        else
+            ps.setNull(index, sqlType);
+    }
+
     public int insert(Connection conn, Payment payment) throws SQLException {
-        logger.debug("Inserting payment: {}", payment);
+        LOGGER.debug("Inserting payment: {}", payment);
         try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
             setPaymentParams(ps, payment);
             ps.executeUpdate();
@@ -86,7 +90,7 @@ public class JdbcPaymentDao {
                     payment.setPaymentID(id);
                     return id;
                 } else {
-                    logger.error("Failed to retrieve generated ID for inserted payment");
+                    LOGGER.error("Failed to retrieve generated ID for inserted payment");
                     throw new SQLException("Failed to retrieve generated ID for inserted payment");
                 }
             }
@@ -94,11 +98,8 @@ public class JdbcPaymentDao {
     }
 
     public int[] insertAll(Connection conn, List<Payment> payments) throws SQLException {
-        if (payments == null || payments.isEmpty())
+        if (isInvalidPaymentList(payments)) {
             return new int[0];
-        for (int i = 0; i < payments.size(); i++) {
-            if (payments.get(i) == null)
-                throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
         int batchSize = 500;
         List<List<Payment>> batches = chunkList(payments, batchSize);
@@ -108,31 +109,14 @@ public class JdbcPaymentDao {
         try {
             conn.setAutoCommit(false);
             for (List<Payment> batch : batches) {
-                try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-                    for (Payment payment : batch) {
-                        setPaymentParams(ps, payment);
-                        ps.addBatch();
-                    }
-                    int[] results = ps.executeBatch();
-                    System.arraycopy(results, 0, totalResults, resultIndex, results.length);
-                    resultIndex += results.length;
-                    logger.debug("Inserted {} rows in batch", results.length);
-                    try (ResultSet rs = ps.getGeneratedKeys()) {
-                        List<Integer> keys = new ArrayList<>();
-                        while (rs.next()) {
-                            keys.add(rs.getInt(1));
-                        }
-                        for (int i = 0; i < batch.size() && i < keys.size(); i++) {
-                            batch.get(i).setPaymentID(keys.get(i));
-                        }
-                    }
-                } catch (SQLException e) {
-                }
+                int[] results = processBatch(conn, batch);
+                System.arraycopy(results, 0, totalResults, resultIndex, results.length);
+                resultIndex += results.length;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch insert failed, rolled back", e);
+            LOGGER.error("Batch insert failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
@@ -140,8 +124,40 @@ public class JdbcPaymentDao {
         return totalResults;
     }
 
+    private boolean isInvalidPaymentList(List<Payment> payments) {
+        if (payments == null || payments.isEmpty()) {
+            return true;
+        }
+        for (int i = 0; i < payments.size(); i++) {
+            if (payments.get(i) == null)
+                throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
+        }
+        return false;
+    }
+
+    private int[] processBatch(Connection conn, List<Payment> batch) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+            for (Payment payment : batch) {
+                setPaymentParams(ps, payment);
+                ps.addBatch();
+            }
+            int[] results = ps.executeBatch();
+            LOGGER.debug("Inserted {} rows in batch", results.length);
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                List<Integer> keys = new ArrayList<>();
+                while (rs.next()) {
+                    keys.add(rs.getInt(1));
+                }
+                for (int i = 0; i < batch.size() && i < keys.size(); i++) {
+                    batch.get(i).setPaymentID(keys.get(i));
+                }
+            }
+            return results;
+        }
+    }
+
     public Payment findById(Connection conn, int id) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_PAYMENT_ID))) {
             ps.setInt(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? extract(rs) : null;
@@ -179,13 +195,8 @@ public class JdbcPaymentDao {
     }
 
     public int[] updateAll(Connection conn, List<Payment> payments) throws SQLException {
-        if (payments == null || payments.isEmpty())
+        if (isInvalidUpdatePaymentList(payments)) {
             return new int[0];
-        for (Payment payment : payments) {
-            if (payment == null)
-                throw new IllegalArgumentException("Null DTO in batch update");
-            if (payment.getPaymentID() == null)
-                throw new IllegalArgumentException("Null primary key in batch update");
         }
         int batchSize = 500;
         List<List<Payment>> batches = chunkList(payments, batchSize);
@@ -195,28 +206,48 @@ public class JdbcPaymentDao {
         try {
             conn.setAutoCommit(false);
             for (List<Payment> batch : batches) {
-                try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
-                    for (Payment payment : batch) {
-                        setPaymentParams(ps, payment);
-                        ps.setInt(7, payment.getPaymentID());
-                        ps.addBatch();
-                    }
-                    int[] results = ps.executeBatch();
-                    System.arraycopy(results, 0, totalResults, resultIndex, results.length);
-                    resultIndex += results.length;
-                    logger.debug("Updated {} rows in batch", results.length);
-                } catch (SQLException e) {
-                }
+                int[] results = processUpdateBatch(conn, batch);
+                System.arraycopy(results, 0, totalResults, resultIndex, results.length);
+                resultIndex += results.length;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch update failed, rolled back", e);
+            LOGGER.error("Batch update failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
         }
         return totalResults;
+    }
+
+    private boolean isInvalidUpdatePaymentList(List<Payment> payments) {
+        if (payments == null || payments.isEmpty()) {
+            return true;
+        }
+        for (Payment payment : payments) {
+            if (payment == null)
+                throw new IllegalArgumentException("Null DTO in batch update");
+            if (payment.getPaymentID() == null)
+                throw new IllegalArgumentException("Null primary key in batch update");
+        }
+        return false;
+    }
+
+    private int[] processUpdateBatch(Connection conn, List<Payment> batch) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
+            for (Payment payment : batch) {
+                setPaymentParams(ps, payment);
+                ps.setInt(7, payment.getPaymentID());
+                ps.addBatch();
+            }
+            int[] results = ps.executeBatch();
+            LOGGER.debug("Updated {} rows in batch", results.length);
+            return results;
+        } catch (SQLException e) {
+            LOGGER.error("Batch update failed", e);
+            throw e;
+        }
     }
 
     public boolean deleteById(Connection conn, int id) throws SQLException {
@@ -227,11 +258,8 @@ public class JdbcPaymentDao {
     }
 
     public int deleteAllByIds(Connection conn, List<Integer> ids) throws SQLException {
-        if (ids == null || ids.isEmpty())
+        if (isInvalidIdsList(ids)) {
             return 0;
-        for (Integer id : ids) {
-            if (id == null)
-                throw new IllegalArgumentException("Null ID in batch delete");
         }
         int chunkSize = 1000;
         List<List<Integer>> chunks = chunkList(ids, chunkSize);
@@ -240,22 +268,13 @@ public class JdbcPaymentDao {
         try {
             conn.setAutoCommit(false);
             for (List<Integer> chunk : chunks) {
-                String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
-                String sql = String.format("DELETE FROM %s WHERE %s IN (%s)", TABLE, COL_PAYMENT_ID, placeholders);
-                try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                    for (int i = 0; i < chunk.size(); i++) {
-                        ps.setInt(i + 1, chunk.get(i));
-                    }
-                    int affected = ps.executeUpdate();
-                    totalDeleted += affected;
-                    logger.debug("Deleted {} rows in batch", affected);
-                } catch (SQLException e) {
-                }
+                int affected = processDeleteChunk(conn, chunk);
+                totalDeleted += affected;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch delete failed, rolled back", e);
+            LOGGER.error("Batch delete failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
@@ -263,9 +282,36 @@ public class JdbcPaymentDao {
         return totalDeleted;
     }
 
+    private boolean isInvalidIdsList(List<Integer> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return true;
+        }
+        for (Integer id : ids) {
+            if (id == null)
+                throw new IllegalArgumentException("Null ID in batch delete");
+        }
+        return false;
+    }
+
+    private int processDeleteChunk(Connection conn, List<Integer> chunk) throws SQLException {
+        String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
+        String sql = String.format("DELETE FROM %s WHERE %s IN (%s)", TABLE, COL_PAYMENT_ID, placeholders);
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < chunk.size(); i++) {
+                ps.setInt(i + 1, chunk.get(i));
+            }
+            int affected = ps.executeUpdate();
+            LOGGER.debug("Deleted {} rows in batch", affected);
+            return affected;
+        } catch (SQLException e) {
+            LOGGER.error("Batch delete failed", e);
+            throw e;
+        }
+    }
+
     public List<Payment> findByCustomerID(Connection conn, int customerID) throws SQLException {
         List<Payment> list = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_CUSTOMER_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_CUSTOMER_ID))) {
             ps.setInt(1, customerID);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -278,7 +324,7 @@ public class JdbcPaymentDao {
 
     public List<Payment> findByRentalID(Connection conn, int rentalID) throws SQLException {
         List<Payment> list = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_RENTAL_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_RENTAL_ID))) {
             ps.setInt(1, rentalID);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -291,7 +337,7 @@ public class JdbcPaymentDao {
 
     public List<Payment> findByStaffID(Connection conn, int staffID) throws SQLException {
         List<Payment> list = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_STAFF_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_STAFF_ID))) {
             ps.setInt(1, staffID);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -303,39 +349,12 @@ public class JdbcPaymentDao {
     }
 
     private void setPaymentParams(PreparedStatement ps, Payment payment) throws SQLException {
-        if (payment.getCustomer() != null) {
-            ps.setObject(1, payment.getCustomer().getCustomerID(), Types.INTEGER);
-        } else {
-            ps.setNull(1, Types.INTEGER);
-        }
-        if (payment.getStaff() != null) {
-            ps.setObject(2, payment.getStaff().getStaffID(), Types.INTEGER);
-        } else {
-            ps.setNull(2, Types.INTEGER);
-        }
-        if (payment.getRental() != null) {
-            ps.setObject(3, payment.getRental().getRentalID(), Types.INTEGER);
-        } else {
-            ps.setNull(3, Types.INTEGER);
-        }
-        java.math.BigDecimal val4 = payment.getAmount();
-        if (val4 != null) {
-            ps.setObject(4, val4, Types.NUMERIC);
-        } else {
-            ps.setNull(4, Types.NUMERIC);
-        }
-        java.time.LocalDateTime val5 = payment.getPaymentDate();
-        if (val5 != null) {
-            ps.setObject(5, java.sql.Timestamp.valueOf(val5), Types.TIMESTAMP);
-        } else {
-            ps.setNull(5, Types.TIMESTAMP);
-        }
-        java.time.LocalDateTime val6 = payment.getLastUpdate();
-        if (val6 != null) {
-            ps.setObject(6, java.sql.Timestamp.valueOf(val6), Types.TIMESTAMP);
-        } else {
-            ps.setNull(6, Types.TIMESTAMP);
-        }
+        setNullable(ps, 1, payment.getCustomer() != null ? payment.getCustomer().getCustomerID() : null, Types.INTEGER);
+        setNullable(ps, 2, payment.getStaff() != null ? payment.getStaff().getStaffID() : null, Types.INTEGER);
+        setNullable(ps, 3, payment.getRental() != null ? payment.getRental().getRentalID() : null, Types.INTEGER);
+        setNullable(ps, 4, payment.getAmount(), Types.NUMERIC);
+        setNullable(ps, 5, payment.getPaymentDate() != null ? java.sql.Timestamp.valueOf(payment.getPaymentDate()) : null, Types.TIMESTAMP);
+        setNullable(ps, 6, payment.getLastUpdate() != null ? java.sql.Timestamp.valueOf(payment.getLastUpdate()) : null, Types.TIMESTAMP);
     }
 
     private Payment extract(ResultSet rs) throws SQLException {

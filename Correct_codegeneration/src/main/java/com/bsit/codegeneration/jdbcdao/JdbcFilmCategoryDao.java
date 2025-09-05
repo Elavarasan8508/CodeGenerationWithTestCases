@@ -1,19 +1,23 @@
 package com.bsit.codegeneration.jdbcdao;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.ResultSet;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
-import java.time.LocalDateTime;
-import com.bsit.codegeneration.pojo.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import java.util.Collections;
-import java.util.stream.Collectors;
+import java.sql.Timestamp;
+import com.bsit.codegeneration.pojo.FilmCategory;
+import com.bsit.codegeneration.pojo.Film;
+import com.bsit.codegeneration.pojo.Category;
 
 public class JdbcFilmCategoryDao {
 
-    private static final Logger logger = LoggerFactory.getLogger(JdbcFilmCategoryDao.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(JdbcFilmCategoryDao.class);
 
     private static final String TABLE = "film_category";
 
@@ -23,26 +27,16 @@ public class JdbcFilmCategoryDao {
 
     private static final String COL_LAST_UPDATE = "last_update";
 
+    private static final String SELECT_COLUMNS = "film_id, category_id, last_update";
+
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s, %s)
         VALUES (?, ?, ?)
         """.formatted(TABLE, COL_FILM_ID, COL_CATEGORY_ID, COL_LAST_UPDATE);
 
-    private static final String SELECT_BY_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("film_id, category_id, last_update", TABLE, COL_FILM_ID);
-
     private static final String SELECT_ALL_BASE = """
         SELECT %s FROM %s ORDER BY %s
-        """.formatted("film_id, category_id, last_update", TABLE, COL_FILM_ID);
-
-    private static final String SELECT_BY_CATEGORY_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("film_id, category_id, last_update", TABLE, COL_CATEGORY_ID);
-
-    private static final String SELECT_BY_FILM_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("film_id, category_id, last_update", TABLE, COL_FILM_ID);
+        """.formatted(SELECT_COLUMNS, TABLE, COL_FILM_ID);
 
     private static final String UPDATE_SQL = """
         UPDATE %s
@@ -62,8 +56,21 @@ public class JdbcFilmCategoryDao {
         return chunks;
     }
 
+    private static String getSelectByColumnSql(String column) {
+        return """
+            SELECT %s FROM %s WHERE %s = ?
+            """.formatted(SELECT_COLUMNS, TABLE, column);
+    }
+
+    private static void setNullable(PreparedStatement ps, int index, Object value, int sqlType) throws SQLException {
+        if (value != null)
+            ps.setObject(index, value, sqlType);
+        else
+            ps.setNull(index, sqlType);
+    }
+
     public int insert(Connection conn, FilmCategory filmcategory) throws SQLException {
-        logger.debug("Inserting filmcategory: {}", filmcategory);
+        LOGGER.debug("Inserting filmcategory: {}", filmcategory);
         try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
             setFilmCategoryParams(ps, filmcategory);
             ps.executeUpdate();
@@ -72,11 +79,8 @@ public class JdbcFilmCategoryDao {
     }
 
     public int[] insertAll(Connection conn, List<FilmCategory> filmcategorys) throws SQLException {
-        if (filmcategorys == null || filmcategorys.isEmpty())
+        if (isInvalidFilmCategoryList(filmcategorys)) {
             return new int[0];
-        for (int i = 0; i < filmcategorys.size(); i++) {
-            if (filmcategorys.get(i) == null)
-                throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
         int batchSize = 500;
         List<List<FilmCategory>> batches = chunkList(filmcategorys, batchSize);
@@ -86,22 +90,14 @@ public class JdbcFilmCategoryDao {
         try {
             conn.setAutoCommit(false);
             for (List<FilmCategory> batch : batches) {
-                try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
-                    for (FilmCategory filmcategory : batch) {
-                        setFilmCategoryParams(ps, filmcategory);
-                        ps.addBatch();
-                    }
-                    int[] results = ps.executeBatch();
-                    System.arraycopy(results, 0, totalResults, resultIndex, results.length);
-                    resultIndex += results.length;
-                    logger.debug("Inserted {} rows in batch", results.length);
-                } catch (SQLException e) {
-                }
+                int[] results = processBatch(conn, batch);
+                System.arraycopy(results, 0, totalResults, resultIndex, results.length);
+                resultIndex += results.length;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch insert failed, rolled back", e);
+            LOGGER.error("Batch insert failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
@@ -109,8 +105,31 @@ public class JdbcFilmCategoryDao {
         return totalResults;
     }
 
+    private boolean isInvalidFilmCategoryList(List<FilmCategory> filmcategorys) {
+        if (filmcategorys == null || filmcategorys.isEmpty()) {
+            return true;
+        }
+        for (int i = 0; i < filmcategorys.size(); i++) {
+            if (filmcategorys.get(i) == null)
+                throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
+        }
+        return false;
+    }
+
+    private int[] processBatch(Connection conn, List<FilmCategory> batch) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL)) {
+            for (FilmCategory filmcategory : batch) {
+                setFilmCategoryParams(ps, filmcategory);
+                ps.addBatch();
+            }
+            int[] results = ps.executeBatch();
+            LOGGER.debug("Inserted {} rows in batch", results.length);
+            return results;
+        }
+    }
+
     public FilmCategory findById(Connection conn, int id) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_FILM_ID))) {
             ps.setInt(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? extract(rs) : null;
@@ -148,13 +167,8 @@ public class JdbcFilmCategoryDao {
     }
 
     public int[] updateAll(Connection conn, List<FilmCategory> filmcategorys) throws SQLException {
-        if (filmcategorys == null || filmcategorys.isEmpty())
+        if (isInvalidUpdateFilmCategoryList(filmcategorys)) {
             return new int[0];
-        for (FilmCategory filmcategory : filmcategorys) {
-            if (filmcategory == null)
-                throw new IllegalArgumentException("Null DTO in batch update");
-            if (filmcategory.getFilmID() == null)
-                throw new IllegalArgumentException("Null primary key in batch update");
         }
         int batchSize = 500;
         List<List<FilmCategory>> batches = chunkList(filmcategorys, batchSize);
@@ -164,28 +178,48 @@ public class JdbcFilmCategoryDao {
         try {
             conn.setAutoCommit(false);
             for (List<FilmCategory> batch : batches) {
-                try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
-                    for (FilmCategory filmcategory : batch) {
-                        setFilmCategoryParams(ps, filmcategory);
-                        ps.setInt(3, filmcategory.getFilmID());
-                        ps.addBatch();
-                    }
-                    int[] results = ps.executeBatch();
-                    System.arraycopy(results, 0, totalResults, resultIndex, results.length);
-                    resultIndex += results.length;
-                    logger.debug("Updated {} rows in batch", results.length);
-                } catch (SQLException e) {
-                }
+                int[] results = processUpdateBatch(conn, batch);
+                System.arraycopy(results, 0, totalResults, resultIndex, results.length);
+                resultIndex += results.length;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch update failed, rolled back", e);
+            LOGGER.error("Batch update failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
         }
         return totalResults;
+    }
+
+    private boolean isInvalidUpdateFilmCategoryList(List<FilmCategory> filmcategorys) {
+        if (filmcategorys == null || filmcategorys.isEmpty()) {
+            return true;
+        }
+        for (FilmCategory filmcategory : filmcategorys) {
+            if (filmcategory == null)
+                throw new IllegalArgumentException("Null DTO in batch update");
+            if (filmcategory.getFilmID() == null)
+                throw new IllegalArgumentException("Null primary key in batch update");
+        }
+        return false;
+    }
+
+    private int[] processUpdateBatch(Connection conn, List<FilmCategory> batch) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
+            for (FilmCategory filmcategory : batch) {
+                setFilmCategoryParams(ps, filmcategory);
+                ps.setInt(3, filmcategory.getFilmID());
+                ps.addBatch();
+            }
+            int[] results = ps.executeBatch();
+            LOGGER.debug("Updated {} rows in batch", results.length);
+            return results;
+        } catch (SQLException e) {
+            LOGGER.error("Batch update failed", e);
+            throw e;
+        }
     }
 
     public boolean deleteById(Connection conn, int id) throws SQLException {
@@ -196,11 +230,8 @@ public class JdbcFilmCategoryDao {
     }
 
     public int deleteAllByIds(Connection conn, List<Integer> ids) throws SQLException {
-        if (ids == null || ids.isEmpty())
+        if (isInvalidIdsList(ids)) {
             return 0;
-        for (Integer id : ids) {
-            if (id == null)
-                throw new IllegalArgumentException("Null ID in batch delete");
         }
         int chunkSize = 1000;
         List<List<Integer>> chunks = chunkList(ids, chunkSize);
@@ -209,22 +240,13 @@ public class JdbcFilmCategoryDao {
         try {
             conn.setAutoCommit(false);
             for (List<Integer> chunk : chunks) {
-                String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
-                String sql = String.format("DELETE FROM %s WHERE %s IN (%s)", TABLE, COL_FILM_ID, placeholders);
-                try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                    for (int i = 0; i < chunk.size(); i++) {
-                        ps.setInt(i + 1, chunk.get(i));
-                    }
-                    int affected = ps.executeUpdate();
-                    totalDeleted += affected;
-                    logger.debug("Deleted {} rows in batch", affected);
-                } catch (SQLException e) {
-                }
+                int affected = processDeleteChunk(conn, chunk);
+                totalDeleted += affected;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch delete failed, rolled back", e);
+            LOGGER.error("Batch delete failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
@@ -232,9 +254,36 @@ public class JdbcFilmCategoryDao {
         return totalDeleted;
     }
 
+    private boolean isInvalidIdsList(List<Integer> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return true;
+        }
+        for (Integer id : ids) {
+            if (id == null)
+                throw new IllegalArgumentException("Null ID in batch delete");
+        }
+        return false;
+    }
+
+    private int processDeleteChunk(Connection conn, List<Integer> chunk) throws SQLException {
+        String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
+        String sql = String.format("DELETE FROM %s WHERE %s IN (%s)", TABLE, COL_FILM_ID, placeholders);
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < chunk.size(); i++) {
+                ps.setInt(i + 1, chunk.get(i));
+            }
+            int affected = ps.executeUpdate();
+            LOGGER.debug("Deleted {} rows in batch", affected);
+            return affected;
+        } catch (SQLException e) {
+            LOGGER.error("Batch delete failed", e);
+            throw e;
+        }
+    }
+
     public List<FilmCategory> findByCategoryID(Connection conn, int categoryID) throws SQLException {
         List<FilmCategory> list = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_CATEGORY_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_CATEGORY_ID))) {
             ps.setInt(1, categoryID);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -247,7 +296,7 @@ public class JdbcFilmCategoryDao {
 
     public List<FilmCategory> findByFilmID(Connection conn, int filmID) throws SQLException {
         List<FilmCategory> list = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_FILM_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_FILM_ID))) {
             ps.setInt(1, filmID);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -259,22 +308,9 @@ public class JdbcFilmCategoryDao {
     }
 
     private void setFilmCategoryParams(PreparedStatement ps, FilmCategory filmcategory) throws SQLException {
-        if (filmcategory.getFilm() != null) {
-            ps.setObject(1, filmcategory.getFilm().getFilmID(), Types.INTEGER);
-        } else {
-            ps.setNull(1, Types.INTEGER);
-        }
-        if (filmcategory.getCategory() != null) {
-            ps.setObject(2, filmcategory.getCategory().getCategoryID(), Types.INTEGER);
-        } else {
-            ps.setNull(2, Types.INTEGER);
-        }
-        java.time.LocalDateTime val3 = filmcategory.getLastUpdate();
-        if (val3 != null) {
-            ps.setObject(3, java.sql.Timestamp.valueOf(val3), Types.TIMESTAMP);
-        } else {
-            ps.setNull(3, Types.TIMESTAMP);
-        }
+        setNullable(ps, 1, filmcategory.getFilm() != null ? filmcategory.getFilm().getFilmID() : null, Types.INTEGER);
+        setNullable(ps, 2, filmcategory.getCategory() != null ? filmcategory.getCategory().getCategoryID() : null, Types.INTEGER);
+        setNullable(ps, 3, filmcategory.getLastUpdate() != null ? java.sql.Timestamp.valueOf(filmcategory.getLastUpdate()) : null, Types.TIMESTAMP);
     }
 
     private FilmCategory extract(ResultSet rs) throws SQLException {

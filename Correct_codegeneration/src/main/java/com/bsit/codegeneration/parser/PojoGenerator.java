@@ -13,9 +13,18 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.*;
+import java.util.List;
+import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.LinkedHashMap;
 
 public class PojoGenerator {
+
+    private PojoGenerator(){}
+    private static final String BIG_DECIMAL_IMPORT = "java.math.BigDecimal";
+    private static final String LOCAL_DATE = "java.time.LocalDate";
+    private static final String LOCAL_DATE_TIME = "java.time.LocalDateTime";    
     public static final String STRING_TYPE = "String";
 
     public static void generateDto(
@@ -66,52 +75,52 @@ public class PojoGenerator {
         NamingStrategyConfig naming = dbConfig.getNamingStrategy();
         LinkedHashMap<String, String> fieldTypes = new LinkedHashMap<>();
         Set<String> addedFields = new HashSet<>();
-        Set<String> fkFieldNames = new HashSet<>();
-        Set<String> columnFieldNames = new HashSet<>();
-        // Collect column field names and types
+        Set<String> relationFields = new HashSet<>();
+
+        // Base columns
         while (columns.next()) {
             String colName = columns.getString("COLUMN_NAME");
-            String fieldName = StringUtils.toCamelCase(colName, naming.getUppercaseAcronyms(), false);
-            columnFieldNames.add(fieldName);
+            String fieldName = StringUtils.toCamelCase(colName, NamingStrategyConfig.getUppercaseAcronyms(), false);
             String dbType = columns.getString("TYPE_NAME");
-            int columnSize = columns.getInt("COLUMN_SIZE");
+            int colSize = columns.getInt("COLUMN_SIZE");
             int decimalDigits = columns.getInt("DECIMAL_DIGITS");
-            String javaType = mapDbTypeToJava(dbType, colName, decimalDigits, columnSize, "ORACLE"); // Assuming Oracle as per original "Oracle-safe" comment
-            fieldTypes.put(fieldName, javaType);
-            addedFields.add(fieldName);
+            String javaType = mapDbTypeToJava(dbType, colName, decimalDigits, colSize, "ORACLE");
+            if (addedFields.add(fieldName)) {
+                fieldTypes.put(fieldName, javaType);
+            }
         }
-        // Forward relationships
+        // Relationships (FK to object)
         if (dtoConfig.isIncludeRelationships() && relationships != null) {
             for (Relationship rel : relationships) {
                 String relatedClass = StringUtils.toCamelCase(
-                        StringUtils.stripPrefix(rel.getRelatedTable(), naming.getStripPrefixes()),
-                        naming.getUppercaseAcronyms(),
+                        StringUtils.stripPrefix(rel.getRelatedTable(), NamingStrategyConfig.getStripPrefixes()),
+                        NamingStrategyConfig.getUppercaseAcronyms(),
                         true
                 );
-                String fkField = StringUtils.toCamelCase(rel.getFkColumn(), naming.getUppercaseAcronyms(), false);
-                if (!fkField.toLowerCase().endsWith("id")) continue;
-                String relationField = fkField.toLowerCase().endsWith("id")
+                String fkField = StringUtils.toCamelCase(rel.getFkColumn(), NamingStrategyConfig.getUppercaseAcronyms(), false);
+                // Strip 'Id' from naming for object field
+                String relationName = fkField.toLowerCase().endsWith("id")
                         ? fkField.substring(0, fkField.length() - 2)
-                        : StringUtils.toCamelCase(rel.getRelatedTable(), naming.getUppercaseAcronyms(), false);
-                if (columnFieldNames.contains(relationField)) continue;
-                if (addedFields.add(relationField)) {
-                    fieldTypes.put(relationField, relatedClass);
-                    fkFieldNames.add(fkField);
+                        : fkField;
+                // Prevent duplicates
+                if (!fieldTypes.containsKey(relationName) && addedFields.add(relationName)) {
+                    fieldTypes.put(relationName, relatedClass);
+                    relationFields.add(relationName);
                 }
             }
         }
-        // Reverse relationships
+        // Reverse (collection/lists)
         if (dtoConfig.isIncludeReverseRelationships() && reverseRelationships != null) {
             for (Relationship rel : reverseRelationships) {
                 String relatedClass = StringUtils.toCamelCase(
-                        StringUtils.stripPrefix(rel.getRelatedTable(), naming.getStripPrefixes()),
-                        naming.getUppercaseAcronyms(),
+                        StringUtils.stripPrefix(rel.getRelatedTable(), NamingStrategyConfig.getStripPrefixes()),
+                        NamingStrategyConfig.getUppercaseAcronyms(),
                         true
                 );
-                String fieldName = StringUtils.toCamelCase(rel.getRelatedTable(), naming.getUppercaseAcronyms(), false) + "List";
-                if (columnFieldNames.contains(fieldName)) continue;
-                if (addedFields.add(fieldName)) {
-                    fieldTypes.put(fieldName, "List<" + relatedClass + ">");
+                String listField = StringUtils.toCamelCase(rel.getRelatedTable(), NamingStrategyConfig.getUppercaseAcronyms(), false) + "List";
+                // Ensure non-duplication against base and earlier relation names
+                if (!fieldTypes.containsKey(listField) && addedFields.add(listField)) {
+                    fieldTypes.put(listField, "List<" + relatedClass + ">");
                 }
             }
         }
@@ -188,97 +197,72 @@ public class PojoGenerator {
      * Map database type to Java type (improved mapping based on DAO)
      */
     private static String mapDbTypeToJava(String dbType, String columnName, int decimalDigits, int columnSize, String vendor) {
-        // Handle null columnName safely
-        if (columnName == null) {
-            return "String";
-        }
-        // Convert to lowercase for case-insensitive comparison
+        if (columnName == null) return STRING_TYPE;
         String colNameLower = columnName.toLowerCase();
-        // Special handling for specific column names
-        // Handle address as String (not as Address object)
-        if (colNameLower.equals("address") || colNameLower.equals("address2")) {
-            return "String";
-        }
-        // Handle active/inactive flags as Boolean
+
+        // === Name-based overrides ===
+        if (colNameLower.equals("address") || colNameLower.equals("address2")) return STRING_TYPE;
         if (colNameLower.equals("active") || colNameLower.equals("is_active") ||
-                colNameLower.equals("enabled") || colNameLower.equals("is_enabled")) {
-            return "Boolean";
-        }
-        // Handle duration fields as Integer
+                colNameLower.equals("enabled") || colNameLower.equals("is_enabled")) return "Boolean";
         if (colNameLower.contains("duration") || colNameLower.contains("length") ||
-                colNameLower.equals("release_year") || colNameLower.equals("year")) {
-            return "Integer";
+                colNameLower.equals("release_year") || colNameLower.equals("year")) return "Integer";
+        if (colNameLower.equals("id") || colNameLower.endsWith("_id") || colNameLower.endsWith("_no")) return "Integer";
+        if (colNameLower.contains("amount") || colNameLower.contains("price") ||
+                colNameLower.contains("cost") || colNameLower.contains("rate") ||
+                colNameLower.contains("fee") || colNameLower.contains("balance") ||
+                colNameLower.contains("total") || colNameLower.equals("payment") ||
+                colNameLower.contains("payment_amount") || colNameLower.contains("payment_total")) {
+            return BIG_DECIMAL_IMPORT;
         }
-        // Handle ID fields explicitly as Integer (or Long if needed)
-        if (colNameLower.equals("id") || colNameLower.endsWith("_id") || colNameLower.endsWith("_no")) {
-            // Adjust to "Long" if your schema uses big integers for these; otherwise keep "Integer"
-            return "Integer";
-        }
-        // Handle date/time fields BEFORE monetary fields to avoid conflicts
-        if (colNameLower.contains("date") || colNameLower.contains("time") ||
-                colNameLower.contains("created") || colNameLower.contains("updated") ||
-                colNameLower.contains("modified") || colNameLower.contains("timestamp")) {
-            // Let the database type mapping handle the specific date/time type
-            // This will be processed later in the switch statement
-        } else {
-            // Handle monetary/financial fields as BigDecimal (moved after date check)
-            if (colNameLower.contains("amount") || colNameLower.contains("price") ||
-                    colNameLower.contains("cost") || colNameLower.contains("rate") ||
-                    colNameLower.contains("fee") || colNameLower.contains("balance") ||
-                    colNameLower.contains("total") || colNameLower.equals("payment") ||
-                    colNameLower.contains("payment_amount") || colNameLower.contains("payment_total")) {
-                return "java.math.BigDecimal";
+
+        if (dbType == null) return STRING_TYPE;
+        dbType = dbType.toUpperCase();
+
+        // === Vendor-specific overrides ===
+        if ("ORACLE".equals(vendor)) {
+            if ("DATE".equals(dbType)) {
+                // Oracle DATE includes time, but we infer usage from column name
+                if (colNameLower.contains("create") || colNameLower.contains("date")) {
+                    return LOCAL_DATE;
+                } else if (colNameLower.contains("update") || colNameLower.contains("modified") || colNameLower.contains("timestamp")) {
+                    return LOCAL_DATE_TIME;
+                }
+                return LOCAL_DATE_TIME; // Default for Oracle DATE
             }
         }
-        // Handle null dbType safely
-        if (dbType == null) {
-            return "String";
-        }
-        dbType = dbType.toUpperCase();
-        // Vendor-specific adjustments
-        if ("ORACLE".equals(vendor) && "DATE".equals(dbType)) {
-            return "java.time.LocalDateTime";
-        }
-        // Database type mapping - this takes precedence over column name patterns
+
+        // === Standard DB type mapping ===
         return switch (dbType) {
             case "SERIAL" -> "Integer";
-            case "VARCHAR", "VARCHAR2", "CHAR", "TEXT", "CLOB", "LONGTEXT", "MEDIUMTEXT", "NVARCHAR2", "NCLOB",
-                 "LONG" -> "String";
+            case "VARCHAR", "VARCHAR2", "CHAR", "TEXT", "CLOB", "LONGTEXT", "MEDIUMTEXT", "NVARCHAR2", "NCLOB", "LONG" -> STRING_TYPE;
             case "INT", "INTEGER", "SMALLINT", "TINYINT", "YEAR", "INT4", "INT2" -> {
-                // special-case: MySQL TINYINT(1) commonly used for boolean
-                if ("TINYINT".equals(dbType) && columnSize == 1) {
-                    yield "Boolean";
-                }
+                if ("TINYINT".equals(dbType) && columnSize == 1) yield "Boolean"; // MySQL-style boolean
                 yield "Integer";
             }
             case "BIGINT", "INT8" -> "Long";
-            case "DECIMAL", "NUMERIC", "NUMBER" ->
-                    "java.math.BigDecimal"; // Always use BigDecimal for decimal types
+            case "DECIMAL", "NUMERIC", "NUMBER" -> BIG_DECIMAL_IMPORT;
             case "FLOAT", "REAL", "BINARY_FLOAT" -> {
-                // For monetary columns, use BigDecimal even if stored as FLOAT
-                if (colNameLower.contains("amount") || colNameLower.contains("price") ||
-                        colNameLower.contains("cost") || colNameLower.contains("rate")) {
-                    yield "java.math.BigDecimal";
+                if (colNameLower.contains("amount") || colNameLower.contains("price") || colNameLower.contains("cost") || colNameLower.contains("rate")) {
+                    yield BIG_DECIMAL_IMPORT;
                 }
                 yield "Float";
             }
             case "DOUBLE", "DOUBLE PRECISION", "BINARY_DOUBLE" -> {
-                // For monetary columns, use BigDecimal even if stored as DOUBLE
-                if (colNameLower.contains("amount") || colNameLower.contains("price") ||
-                        colNameLower.contains("cost") || colNameLower.contains("rate")) {
-                    yield "java.math.BigDecimal";
+                if (colNameLower.contains("amount") || colNameLower.contains("price") || colNameLower.contains("cost") || colNameLower.contains("rate")) {
+                    yield BIG_DECIMAL_IMPORT;
                 }
                 yield "Double";
             }
             case "BOOLEAN", "BOOL", "BIT" -> "Boolean";
-            case "DATE" -> "java.time.LocalDate";
+            case "DATE" -> LOCAL_DATE;
             case "TIME" -> "java.time.LocalTime";
-            case "TIMESTAMP", "TIMESTAMPTZ", "DATETIME" -> "java.time.LocalDateTime";
+            case "TIMESTAMP", "TIMESTAMPTZ", "DATETIME" -> LOCAL_DATE_TIME;
             case "JSON", "JSONB" -> "java.util.Map<String, Object>";
             case "ARRAY" -> "java.util.List<Object>";
             case "BLOB", "BYTEA", "BINARY", "VARBINARY", "RAW" -> "byte[]";
             case "UUID" -> "java.util.UUID";
-            default -> "String";
+            default -> STRING_TYPE;
         };
     }
+
 }

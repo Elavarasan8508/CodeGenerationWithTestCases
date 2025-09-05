@@ -11,8 +11,8 @@ public class NamingStrategyConfig {
         return stripPrefixes;
     }
 
-    public void setStripPrefixes(List<String> stripPrefixes) {
-        this.stripPrefixes = stripPrefixes;
+    public static void setStripPrefixes(List<String> stripPrefixes) {
+        NamingStrategyConfig.stripPrefixes = stripPrefixes;
     }
 
     public boolean isConvertToCamelCase() {
@@ -27,7 +27,7 @@ public class NamingStrategyConfig {
         return uppercaseAcronyms;
     }
 
-    public void setUppercaseAcronyms(List<String> uppercaseAcronyms) {
-        this.uppercaseAcronyms = uppercaseAcronyms;
+    public static void setUppercaseAcronyms(List<String> uppercaseAcronyms) {
+        NamingStrategyConfig.uppercaseAcronyms = uppercaseAcronyms;
     }
 }

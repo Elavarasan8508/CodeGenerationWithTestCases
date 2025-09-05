@@ -1,6 +1,7 @@
 package com.bsit.codegeneration.pojo;
 
 import java.util.List;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 public class Customer {
@@ -19,7 +20,7 @@ public class Customer {
 
     private Boolean active;
 
-    private java.time.LocalDateTime createDate;
+    private java.time.LocalDate createDate;
 
     private java.time.LocalDateTime lastUpdate;
 
@@ -36,7 +37,7 @@ public class Customer {
     public Customer() {
     }
 
-    public Customer(Integer customerID, Integer storeID, String firstName, String lastName, String email, Integer addressID, Boolean active, java.time.LocalDateTime createDate, java.time.LocalDateTime lastUpdate, Address address, Store store, Payment customer) {
+    public Customer(Integer customerID, Integer storeID, String firstName, String lastName, String email, Integer addressID, Boolean active, java.time.LocalDate createDate, java.time.LocalDateTime lastUpdate, Address address, Store store, Payment customer) {
         this.customerID = customerID;
         this.storeID = storeID;
         this.firstName = firstName;
@@ -107,11 +108,11 @@ public class Customer {
         this.active = active;
     }
 
-    public java.time.LocalDateTime getCreateDate() {
+    public java.time.LocalDate getCreateDate() {
         return createDate;
     }
 
-    public void setCreateDate(java.time.LocalDateTime createDate) {
+    public void setCreateDate(java.time.LocalDate createDate) {
         this.createDate = createDate;
     }
 
@@ -202,7 +203,7 @@ public class Customer {
             return this;
         }
 
-        public Builder createDate(java.time.LocalDateTime createDate) {
+        public Builder createDate(java.time.LocalDate createDate) {
             instance.setCreateDate(createDate);
             return this;
         }

@@ -1,20 +1,24 @@
 package com.bsit.codegeneration.jdbcdao;
 
-import java.sql.*;
-import java.time.LocalDate;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.ResultSet;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
-import java.time.LocalDateTime;
-import com.bsit.codegeneration.pojo.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import java.util.Collections;
-import java.util.stream.Collectors;
+import java.sql.Timestamp;
+import java.time.LocalDate;
+import com.bsit.codegeneration.pojo.Customer;
+import com.bsit.codegeneration.pojo.Address;
+import com.bsit.codegeneration.pojo.Store;
 
 public class JdbcCustomerDao {
 
-    private static final Logger logger = LoggerFactory.getLogger(JdbcCustomerDao.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(JdbcCustomerDao.class);
 
     private static final String TABLE = "customer";
 
@@ -36,26 +40,16 @@ public class JdbcCustomerDao {
 
     private static final String COL_LAST_UPDATE = "last_update";
 
+    private static final String SELECT_COLUMNS = "customer_id, store_id, first_name, last_name, email, address_id, active, create_date, last_update";
+
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s, %s, %s, %s, %s, %s, %s)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """.formatted(TABLE, COL_STORE_ID, COL_FIRST_NAME, COL_LAST_NAME, COL_EMAIL, COL_ADDRESS_ID, COL_ACTIVE, COL_CREATE_DATE, COL_LAST_UPDATE);
 
-    private static final String SELECT_BY_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("customer_id, store_id, first_name, last_name, email, address_id, active, create_date, last_update", TABLE, COL_CUSTOMER_ID);
-
     private static final String SELECT_ALL_BASE = """
         SELECT %s FROM %s ORDER BY %s
-        """.formatted("customer_id, store_id, first_name, last_name, email, address_id, active, create_date, last_update", TABLE, COL_CUSTOMER_ID);
-
-    private static final String SELECT_BY_ADDRESS_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("customer_id, store_id, first_name, last_name, email, address_id, active, create_date, last_update", TABLE, COL_ADDRESS_ID);
-
-    private static final String SELECT_BY_STORE_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("customer_id, store_id, first_name, last_name, email, address_id, active, create_date, last_update", TABLE, COL_STORE_ID);
+        """.formatted(SELECT_COLUMNS, TABLE, COL_CUSTOMER_ID);
 
     private static final String UPDATE_SQL = """
         UPDATE %s
@@ -75,8 +69,21 @@ public class JdbcCustomerDao {
         return chunks;
     }
 
+    private static String getSelectByColumnSql(String column) {
+        return """
+            SELECT %s FROM %s WHERE %s = ?
+            """.formatted(SELECT_COLUMNS, TABLE, column);
+    }
+
+    private static void setNullable(PreparedStatement ps, int index, Object value, int sqlType) throws SQLException {
+        if (value != null)
+            ps.setObject(index, value, sqlType);
+        else
+            ps.setNull(index, sqlType);
+    }
+
     public int insert(Connection conn, Customer customer) throws SQLException {
-        logger.debug("Inserting customer: {}", customer);
+        LOGGER.debug("Inserting customer: {}", customer);
         try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
             setCustomerParams(ps, customer);
             ps.executeUpdate();
@@ -86,7 +93,7 @@ public class JdbcCustomerDao {
                     customer.setCustomerID(id);
                     return id;
                 } else {
-                    logger.error("Failed to retrieve generated ID for inserted customer");
+                    LOGGER.error("Failed to retrieve generated ID for inserted customer");
                     throw new SQLException("Failed to retrieve generated ID for inserted customer");
                 }
             }
@@ -94,11 +101,8 @@ public class JdbcCustomerDao {
     }
 
     public int[] insertAll(Connection conn, List<Customer> customers) throws SQLException {
-        if (customers == null || customers.isEmpty())
+        if (isInvalidCustomerList(customers)) {
             return new int[0];
-        for (int i = 0; i < customers.size(); i++) {
-            if (customers.get(i) == null)
-                throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
         int batchSize = 500;
         List<List<Customer>> batches = chunkList(customers, batchSize);
@@ -108,31 +112,14 @@ public class JdbcCustomerDao {
         try {
             conn.setAutoCommit(false);
             for (List<Customer> batch : batches) {
-                try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-                    for (Customer customer : batch) {
-                        setCustomerParams(ps, customer);
-                        ps.addBatch();
-                    }
-                    int[] results = ps.executeBatch();
-                    System.arraycopy(results, 0, totalResults, resultIndex, results.length);
-                    resultIndex += results.length;
-                    logger.debug("Inserted {} rows in batch", results.length);
-                    try (ResultSet rs = ps.getGeneratedKeys()) {
-                        List<Integer> keys = new ArrayList<>();
-                        while (rs.next()) {
-                            keys.add(rs.getInt(1));
-                        }
-                        for (int i = 0; i < batch.size() && i < keys.size(); i++) {
-                            batch.get(i).setCustomerID(keys.get(i));
-                        }
-                    }
-                } catch (SQLException e) {
-                }
+                int[] results = processBatch(conn, batch);
+                System.arraycopy(results, 0, totalResults, resultIndex, results.length);
+                resultIndex += results.length;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch insert failed, rolled back", e);
+            LOGGER.error("Batch insert failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
@@ -140,8 +127,40 @@ public class JdbcCustomerDao {
         return totalResults;
     }
 
+    private boolean isInvalidCustomerList(List<Customer> customers) {
+        if (customers == null || customers.isEmpty()) {
+            return true;
+        }
+        for (int i = 0; i < customers.size(); i++) {
+            if (customers.get(i) == null)
+                throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
+        }
+        return false;
+    }
+
+    private int[] processBatch(Connection conn, List<Customer> batch) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+            for (Customer customer : batch) {
+                setCustomerParams(ps, customer);
+                ps.addBatch();
+            }
+            int[] results = ps.executeBatch();
+            LOGGER.debug("Inserted {} rows in batch", results.length);
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                List<Integer> keys = new ArrayList<>();
+                while (rs.next()) {
+                    keys.add(rs.getInt(1));
+                }
+                for (int i = 0; i < batch.size() && i < keys.size(); i++) {
+                    batch.get(i).setCustomerID(keys.get(i));
+                }
+            }
+            return results;
+        }
+    }
+
     public Customer findById(Connection conn, int id) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_CUSTOMER_ID))) {
             ps.setInt(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? extract(rs) : null;
@@ -179,13 +198,8 @@ public class JdbcCustomerDao {
     }
 
     public int[] updateAll(Connection conn, List<Customer> customers) throws SQLException {
-        if (customers == null || customers.isEmpty())
+        if (isInvalidUpdateCustomerList(customers)) {
             return new int[0];
-        for (Customer customer : customers) {
-            if (customer == null)
-                throw new IllegalArgumentException("Null DTO in batch update");
-            if (customer.getCustomerID() == null)
-                throw new IllegalArgumentException("Null primary key in batch update");
         }
         int batchSize = 500;
         List<List<Customer>> batches = chunkList(customers, batchSize);
@@ -195,28 +209,48 @@ public class JdbcCustomerDao {
         try {
             conn.setAutoCommit(false);
             for (List<Customer> batch : batches) {
-                try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
-                    for (Customer customer : batch) {
-                        setCustomerParams(ps, customer);
-                        ps.setInt(9, customer.getCustomerID());
-                        ps.addBatch();
-                    }
-                    int[] results = ps.executeBatch();
-                    System.arraycopy(results, 0, totalResults, resultIndex, results.length);
-                    resultIndex += results.length;
-                    logger.debug("Updated {} rows in batch", results.length);
-                } catch (SQLException e) {
-                }
+                int[] results = processUpdateBatch(conn, batch);
+                System.arraycopy(results, 0, totalResults, resultIndex, results.length);
+                resultIndex += results.length;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch update failed, rolled back", e);
+            LOGGER.error("Batch update failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
         }
         return totalResults;
+    }
+
+    private boolean isInvalidUpdateCustomerList(List<Customer> customers) {
+        if (customers == null || customers.isEmpty()) {
+            return true;
+        }
+        for (Customer customer : customers) {
+            if (customer == null)
+                throw new IllegalArgumentException("Null DTO in batch update");
+            if (customer.getCustomerID() == null)
+                throw new IllegalArgumentException("Null primary key in batch update");
+        }
+        return false;
+    }
+
+    private int[] processUpdateBatch(Connection conn, List<Customer> batch) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
+            for (Customer customer : batch) {
+                setCustomerParams(ps, customer);
+                ps.setInt(9, customer.getCustomerID());
+                ps.addBatch();
+            }
+            int[] results = ps.executeBatch();
+            LOGGER.debug("Updated {} rows in batch", results.length);
+            return results;
+        } catch (SQLException e) {
+            LOGGER.error("Batch update failed", e);
+            throw e;
+        }
     }
 
     public boolean deleteById(Connection conn, int id) throws SQLException {
@@ -227,11 +261,8 @@ public class JdbcCustomerDao {
     }
 
     public int deleteAllByIds(Connection conn, List<Integer> ids) throws SQLException {
-        if (ids == null || ids.isEmpty())
+        if (isInvalidIdsList(ids)) {
             return 0;
-        for (Integer id : ids) {
-            if (id == null)
-                throw new IllegalArgumentException("Null ID in batch delete");
         }
         int chunkSize = 1000;
         List<List<Integer>> chunks = chunkList(ids, chunkSize);
@@ -240,22 +271,13 @@ public class JdbcCustomerDao {
         try {
             conn.setAutoCommit(false);
             for (List<Integer> chunk : chunks) {
-                String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
-                String sql = String.format("DELETE FROM %s WHERE %s IN (%s)", TABLE, COL_CUSTOMER_ID, placeholders);
-                try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                    for (int i = 0; i < chunk.size(); i++) {
-                        ps.setInt(i + 1, chunk.get(i));
-                    }
-                    int affected = ps.executeUpdate();
-                    totalDeleted += affected;
-                    logger.debug("Deleted {} rows in batch", affected);
-                } catch (SQLException e) {
-                }
+                int affected = processDeleteChunk(conn, chunk);
+                totalDeleted += affected;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch delete failed, rolled back", e);
+            LOGGER.error("Batch delete failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
@@ -263,9 +285,36 @@ public class JdbcCustomerDao {
         return totalDeleted;
     }
 
+    private boolean isInvalidIdsList(List<Integer> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return true;
+        }
+        for (Integer id : ids) {
+            if (id == null)
+                throw new IllegalArgumentException("Null ID in batch delete");
+        }
+        return false;
+    }
+
+    private int processDeleteChunk(Connection conn, List<Integer> chunk) throws SQLException {
+        String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
+        String sql = String.format("DELETE FROM %s WHERE %s IN (%s)", TABLE, COL_CUSTOMER_ID, placeholders);
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < chunk.size(); i++) {
+                ps.setInt(i + 1, chunk.get(i));
+            }
+            int affected = ps.executeUpdate();
+            LOGGER.debug("Deleted {} rows in batch", affected);
+            return affected;
+        } catch (SQLException e) {
+            LOGGER.error("Batch delete failed", e);
+            throw e;
+        }
+    }
+
     public List<Customer> findByAddressID(Connection conn, int addressID) throws SQLException {
         List<Customer> list = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_ADDRESS_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_ADDRESS_ID))) {
             ps.setInt(1, addressID);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -278,7 +327,7 @@ public class JdbcCustomerDao {
 
     public List<Customer> findByStoreID(Connection conn, int storeID) throws SQLException {
         List<Customer> list = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_STORE_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_STORE_ID))) {
             ps.setInt(1, storeID);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -290,37 +339,14 @@ public class JdbcCustomerDao {
     }
 
     private void setCustomerParams(PreparedStatement ps, Customer customer) throws SQLException {
-        if (customer.getStore() != null) {
-            ps.setObject(1, customer.getStore().getStoreID(), Types.INTEGER);
-        } else {
-            ps.setNull(1, Types.INTEGER);
-        }
-        ps.setObject(2, customer.getFirstName(), Types.VARCHAR);
-        ps.setObject(3, customer.getLastName(), Types.VARCHAR);
-        ps.setObject(4, customer.getEmail(), Types.VARCHAR);
-        if (customer.getAddress() != null) {
-            ps.setObject(5, customer.getAddress().getAddressID(), Types.INTEGER);
-        } else {
-            ps.setNull(5, Types.INTEGER);
-        }
-        Boolean val6 = customer.getActive();
-        if (val6 != null) {
-            ps.setObject(6, val6, Types.BOOLEAN);
-        } else {
-            ps.setNull(6, Types.BOOLEAN);
-        }
-        java.time.LocalDate val7 = LocalDate.from(customer.getCreateDate());
-        if (val7 != null) {
-            ps.setObject(7, java.sql.Date.valueOf(val7), Types.DATE);
-        } else {
-            ps.setNull(7, Types.DATE);
-        }
-        java.time.LocalDateTime val8 = customer.getLastUpdate();
-        if (val8 != null) {
-            ps.setObject(8, java.sql.Timestamp.valueOf(val8), Types.TIMESTAMP);
-        } else {
-            ps.setNull(8, Types.TIMESTAMP);
-        }
+        setNullable(ps, 1, customer.getStore() != null ? customer.getStore().getStoreID() : null, Types.INTEGER);
+        setNullable(ps, 2, customer.getFirstName(), Types.VARCHAR);
+        setNullable(ps, 3, customer.getLastName(), Types.VARCHAR);
+        setNullable(ps, 4, customer.getEmail(), Types.VARCHAR);
+        setNullable(ps, 5, customer.getAddress() != null ? customer.getAddress().getAddressID() : null, Types.INTEGER);
+        setNullable(ps, 6, customer.getActive(), Types.BOOLEAN);
+        setNullable(ps, 7, customer.getCreateDate() != null ? java.sql.Date.valueOf(customer.getCreateDate()) : null, Types.DATE);
+        setNullable(ps, 8, customer.getLastUpdate() != null ? java.sql.Timestamp.valueOf(customer.getLastUpdate()) : null, Types.TIMESTAMP);
     }
 
     private Customer extract(ResultSet rs) throws SQLException {
@@ -348,7 +374,7 @@ public class JdbcCustomerDao {
         customer.setActive(active);
         java.sql.Date create_date = rs.getDate(COL_CREATE_DATE);
         if (create_date != null)
-            customer.setCreateDate(LocalDateTime.from(create_date.toLocalDate()));
+            customer.setCreateDate(create_date.toLocalDate());
         Timestamp last_update = rs.getTimestamp(COL_LAST_UPDATE);
         if (last_update != null)
             customer.setLastUpdate(last_update.toLocalDateTime());

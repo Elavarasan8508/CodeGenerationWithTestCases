@@ -1,19 +1,22 @@
 package com.bsit.codegeneration.jdbcdao;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.ResultSet;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
-import java.time.LocalDateTime;
-import com.bsit.codegeneration.pojo.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import java.util.Collections;
-import java.util.stream.Collectors;
+import java.sql.Timestamp;
+import com.bsit.codegeneration.pojo.Address;
+import com.bsit.codegeneration.pojo.City;
 
 public class JdbcAddressDao {
 
-    private static final Logger logger = LoggerFactory.getLogger(JdbcAddressDao.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(JdbcAddressDao.class);
 
     private static final String TABLE = "address";
 
@@ -33,22 +36,16 @@ public class JdbcAddressDao {
 
     private static final String COL_LAST_UPDATE = "last_update";
 
+    private static final String SELECT_COLUMNS = "address_id, address, address2, district, city_id, postal_code, phone, last_update";
+
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s, %s, %s, %s, %s, %s)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """.formatted(TABLE, COL_ADDRESS, COL_ADDRESS2, COL_DISTRICT, COL_CITY_ID, COL_POSTAL_CODE, COL_PHONE, COL_LAST_UPDATE);
 
-    private static final String SELECT_BY_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("address_id, address, address2, district, city_id, postal_code, phone, last_update", TABLE, COL_ADDRESS_ID);
-
     private static final String SELECT_ALL_BASE = """
         SELECT %s FROM %s ORDER BY %s
-        """.formatted("address_id, address, address2, district, city_id, postal_code, phone, last_update", TABLE, COL_ADDRESS_ID);
-
-    private static final String SELECT_BY_CITY_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("address_id, address, address2, district, city_id, postal_code, phone, last_update", TABLE, COL_CITY_ID);
+        """.formatted(SELECT_COLUMNS, TABLE, COL_ADDRESS_ID);
 
     private static final String UPDATE_SQL = """
         UPDATE %s
@@ -68,8 +65,21 @@ public class JdbcAddressDao {
         return chunks;
     }
 
+    private static String getSelectByColumnSql(String column) {
+        return """
+            SELECT %s FROM %s WHERE %s = ?
+            """.formatted(SELECT_COLUMNS, TABLE, column);
+    }
+
+    private static void setNullable(PreparedStatement ps, int index, Object value, int sqlType) throws SQLException {
+        if (value != null)
+            ps.setObject(index, value, sqlType);
+        else
+            ps.setNull(index, sqlType);
+    }
+
     public int insert(Connection conn, Address address) throws SQLException {
-        logger.debug("Inserting address: {}", address);
+        LOGGER.debug("Inserting address: {}", address);
         try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
             setAddressParams(ps, address);
             ps.executeUpdate();
@@ -79,7 +89,7 @@ public class JdbcAddressDao {
                     address.setAddressID(id);
                     return id;
                 } else {
-                    logger.error("Failed to retrieve generated ID for inserted address");
+                    LOGGER.error("Failed to retrieve generated ID for inserted address");
                     throw new SQLException("Failed to retrieve generated ID for inserted address");
                 }
             }
@@ -87,11 +97,8 @@ public class JdbcAddressDao {
     }
 
     public int[] insertAll(Connection conn, List<Address> addresss) throws SQLException {
-        if (addresss == null || addresss.isEmpty())
+        if (isInvalidAddressList(addresss)) {
             return new int[0];
-        for (int i = 0; i < addresss.size(); i++) {
-            if (addresss.get(i) == null)
-                throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
         int batchSize = 500;
         List<List<Address>> batches = chunkList(addresss, batchSize);
@@ -101,31 +108,14 @@ public class JdbcAddressDao {
         try {
             conn.setAutoCommit(false);
             for (List<Address> batch : batches) {
-                try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-                    for (Address address : batch) {
-                        setAddressParams(ps, address);
-                        ps.addBatch();
-                    }
-                    int[] results = ps.executeBatch();
-                    System.arraycopy(results, 0, totalResults, resultIndex, results.length);
-                    resultIndex += results.length;
-                    logger.debug("Inserted {} rows in batch", results.length);
-                    try (ResultSet rs = ps.getGeneratedKeys()) {
-                        List<Integer> keys = new ArrayList<>();
-                        while (rs.next()) {
-                            keys.add(rs.getInt(1));
-                        }
-                        for (int i = 0; i < batch.size() && i < keys.size(); i++) {
-                            batch.get(i).setAddressID(keys.get(i));
-                        }
-                    }
-                } catch (SQLException e) {
-                }
+                int[] results = processBatch(conn, batch);
+                System.arraycopy(results, 0, totalResults, resultIndex, results.length);
+                resultIndex += results.length;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch insert failed, rolled back", e);
+            LOGGER.error("Batch insert failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
@@ -133,8 +123,40 @@ public class JdbcAddressDao {
         return totalResults;
     }
 
+    private boolean isInvalidAddressList(List<Address> addresss) {
+        if (addresss == null || addresss.isEmpty()) {
+            return true;
+        }
+        for (int i = 0; i < addresss.size(); i++) {
+            if (addresss.get(i) == null)
+                throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
+        }
+        return false;
+    }
+
+    private int[] processBatch(Connection conn, List<Address> batch) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+            for (Address address : batch) {
+                setAddressParams(ps, address);
+                ps.addBatch();
+            }
+            int[] results = ps.executeBatch();
+            LOGGER.debug("Inserted {} rows in batch", results.length);
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                List<Integer> keys = new ArrayList<>();
+                while (rs.next()) {
+                    keys.add(rs.getInt(1));
+                }
+                for (int i = 0; i < batch.size() && i < keys.size(); i++) {
+                    batch.get(i).setAddressID(keys.get(i));
+                }
+            }
+            return results;
+        }
+    }
+
     public Address findById(Connection conn, int id) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_ADDRESS_ID))) {
             ps.setInt(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? extract(rs) : null;
@@ -172,13 +194,8 @@ public class JdbcAddressDao {
     }
 
     public int[] updateAll(Connection conn, List<Address> addresss) throws SQLException {
-        if (addresss == null || addresss.isEmpty())
+        if (isInvalidUpdateAddressList(addresss)) {
             return new int[0];
-        for (Address address : addresss) {
-            if (address == null)
-                throw new IllegalArgumentException("Null DTO in batch update");
-            if (address.getAddressID() == null)
-                throw new IllegalArgumentException("Null primary key in batch update");
         }
         int batchSize = 500;
         List<List<Address>> batches = chunkList(addresss, batchSize);
@@ -188,28 +205,48 @@ public class JdbcAddressDao {
         try {
             conn.setAutoCommit(false);
             for (List<Address> batch : batches) {
-                try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
-                    for (Address address : batch) {
-                        setAddressParams(ps, address);
-                        ps.setInt(8, address.getAddressID());
-                        ps.addBatch();
-                    }
-                    int[] results = ps.executeBatch();
-                    System.arraycopy(results, 0, totalResults, resultIndex, results.length);
-                    resultIndex += results.length;
-                    logger.debug("Updated {} rows in batch", results.length);
-                } catch (SQLException e) {
-                }
+                int[] results = processUpdateBatch(conn, batch);
+                System.arraycopy(results, 0, totalResults, resultIndex, results.length);
+                resultIndex += results.length;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch update failed, rolled back", e);
+            LOGGER.error("Batch update failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
         }
         return totalResults;
+    }
+
+    private boolean isInvalidUpdateAddressList(List<Address> addresss) {
+        if (addresss == null || addresss.isEmpty()) {
+            return true;
+        }
+        for (Address address : addresss) {
+            if (address == null)
+                throw new IllegalArgumentException("Null DTO in batch update");
+            if (address.getAddressID() == null)
+                throw new IllegalArgumentException("Null primary key in batch update");
+        }
+        return false;
+    }
+
+    private int[] processUpdateBatch(Connection conn, List<Address> batch) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
+            for (Address address : batch) {
+                setAddressParams(ps, address);
+                ps.setInt(8, address.getAddressID());
+                ps.addBatch();
+            }
+            int[] results = ps.executeBatch();
+            LOGGER.debug("Updated {} rows in batch", results.length);
+            return results;
+        } catch (SQLException e) {
+            LOGGER.error("Batch update failed", e);
+            throw e;
+        }
     }
 
     public boolean deleteById(Connection conn, int id) throws SQLException {
@@ -220,11 +257,8 @@ public class JdbcAddressDao {
     }
 
     public int deleteAllByIds(Connection conn, List<Integer> ids) throws SQLException {
-        if (ids == null || ids.isEmpty())
+        if (isInvalidIdsList(ids)) {
             return 0;
-        for (Integer id : ids) {
-            if (id == null)
-                throw new IllegalArgumentException("Null ID in batch delete");
         }
         int chunkSize = 1000;
         List<List<Integer>> chunks = chunkList(ids, chunkSize);
@@ -233,22 +267,13 @@ public class JdbcAddressDao {
         try {
             conn.setAutoCommit(false);
             for (List<Integer> chunk : chunks) {
-                String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
-                String sql = String.format("DELETE FROM %s WHERE %s IN (%s)", TABLE, COL_ADDRESS_ID, placeholders);
-                try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                    for (int i = 0; i < chunk.size(); i++) {
-                        ps.setInt(i + 1, chunk.get(i));
-                    }
-                    int affected = ps.executeUpdate();
-                    totalDeleted += affected;
-                    logger.debug("Deleted {} rows in batch", affected);
-                } catch (SQLException e) {
-                }
+                int affected = processDeleteChunk(conn, chunk);
+                totalDeleted += affected;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch delete failed, rolled back", e);
+            LOGGER.error("Batch delete failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
@@ -256,9 +281,36 @@ public class JdbcAddressDao {
         return totalDeleted;
     }
 
+    private boolean isInvalidIdsList(List<Integer> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return true;
+        }
+        for (Integer id : ids) {
+            if (id == null)
+                throw new IllegalArgumentException("Null ID in batch delete");
+        }
+        return false;
+    }
+
+    private int processDeleteChunk(Connection conn, List<Integer> chunk) throws SQLException {
+        String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
+        String sql = String.format("DELETE FROM %s WHERE %s IN (%s)", TABLE, COL_ADDRESS_ID, placeholders);
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < chunk.size(); i++) {
+                ps.setInt(i + 1, chunk.get(i));
+            }
+            int affected = ps.executeUpdate();
+            LOGGER.debug("Deleted {} rows in batch", affected);
+            return affected;
+        } catch (SQLException e) {
+            LOGGER.error("Batch delete failed", e);
+            throw e;
+        }
+    }
+
     public List<Address> findByCityID(Connection conn, int cityID) throws SQLException {
         List<Address> list = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_CITY_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_CITY_ID))) {
             ps.setInt(1, cityID);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -270,22 +322,13 @@ public class JdbcAddressDao {
     }
 
     private void setAddressParams(PreparedStatement ps, Address address) throws SQLException {
-        ps.setObject(1, address.getAddress(), Types.VARCHAR);
-        ps.setObject(2, address.getAddress2(), Types.VARCHAR);
-        ps.setObject(3, address.getDistrict(), Types.VARCHAR);
-        if (address.getCity() != null) {
-            ps.setObject(4, address.getCity().getCityID(), Types.INTEGER);
-        } else {
-            ps.setNull(4, Types.INTEGER);
-        }
-        ps.setObject(5, address.getPostalCode(), Types.VARCHAR);
-        ps.setObject(6, address.getPhone(), Types.VARCHAR);
-        java.time.LocalDateTime val7 = address.getLastUpdate();
-        if (val7 != null) {
-            ps.setObject(7, java.sql.Timestamp.valueOf(val7), Types.TIMESTAMP);
-        } else {
-            ps.setNull(7, Types.TIMESTAMP);
-        }
+        setNullable(ps, 1, address.getAddress(), Types.VARCHAR);
+        setNullable(ps, 2, address.getAddress2(), Types.VARCHAR);
+        setNullable(ps, 3, address.getDistrict(), Types.VARCHAR);
+        setNullable(ps, 4, address.getCity() != null ? address.getCity().getCityID() : null, Types.INTEGER);
+        setNullable(ps, 5, address.getPostalCode(), Types.VARCHAR);
+        setNullable(ps, 6, address.getPhone(), Types.VARCHAR);
+        setNullable(ps, 7, address.getLastUpdate() != null ? java.sql.Timestamp.valueOf(address.getLastUpdate()) : null, Types.TIMESTAMP);
     }
 
     private Address extract(ResultSet rs) throws SQLException {

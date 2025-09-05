@@ -1,19 +1,21 @@
 package com.bsit.codegeneration.jdbcdao;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.ResultSet;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
-import java.time.LocalDateTime;
-import com.bsit.codegeneration.pojo.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import java.util.Collections;
-import java.util.stream.Collectors;
+import java.sql.Timestamp;
+import com.bsit.codegeneration.pojo.Category;
 
 public class JdbcCategoryDao {
 
-    private static final Logger logger = LoggerFactory.getLogger(JdbcCategoryDao.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(JdbcCategoryDao.class);
 
     private static final String TABLE = "category";
 
@@ -23,18 +25,16 @@ public class JdbcCategoryDao {
 
     private static final String COL_LAST_UPDATE = "last_update";
 
+    private static final String SELECT_COLUMNS = "category_id, name, last_update";
+
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s)
         VALUES (?, ?)
         """.formatted(TABLE, COL_NAME, COL_LAST_UPDATE);
 
-    private static final String SELECT_BY_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("category_id, name, last_update", TABLE, COL_CATEGORY_ID);
-
     private static final String SELECT_ALL_BASE = """
         SELECT %s FROM %s ORDER BY %s
-        """.formatted("category_id, name, last_update", TABLE, COL_CATEGORY_ID);
+        """.formatted(SELECT_COLUMNS, TABLE, COL_CATEGORY_ID);
 
     private static final String UPDATE_SQL = """
         UPDATE %s
@@ -54,8 +54,21 @@ public class JdbcCategoryDao {
         return chunks;
     }
 
+    private static String getSelectByColumnSql(String column) {
+        return """
+            SELECT %s FROM %s WHERE %s = ?
+            """.formatted(SELECT_COLUMNS, TABLE, column);
+    }
+
+    private static void setNullable(PreparedStatement ps, int index, Object value, int sqlType) throws SQLException {
+        if (value != null)
+            ps.setObject(index, value, sqlType);
+        else
+            ps.setNull(index, sqlType);
+    }
+
     public int insert(Connection conn, Category category) throws SQLException {
-        logger.debug("Inserting category: {}", category);
+        LOGGER.debug("Inserting category: {}", category);
         try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
             setCategoryParams(ps, category);
             ps.executeUpdate();
@@ -65,7 +78,7 @@ public class JdbcCategoryDao {
                     category.setCategoryID(id);
                     return id;
                 } else {
-                    logger.error("Failed to retrieve generated ID for inserted category");
+                    LOGGER.error("Failed to retrieve generated ID for inserted category");
                     throw new SQLException("Failed to retrieve generated ID for inserted category");
                 }
             }
@@ -73,11 +86,8 @@ public class JdbcCategoryDao {
     }
 
     public int[] insertAll(Connection conn, List<Category> categorys) throws SQLException {
-        if (categorys == null || categorys.isEmpty())
+        if (isInvalidCategoryList(categorys)) {
             return new int[0];
-        for (int i = 0; i < categorys.size(); i++) {
-            if (categorys.get(i) == null)
-                throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
         int batchSize = 500;
         List<List<Category>> batches = chunkList(categorys, batchSize);
@@ -87,31 +97,14 @@ public class JdbcCategoryDao {
         try {
             conn.setAutoCommit(false);
             for (List<Category> batch : batches) {
-                try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-                    for (Category category : batch) {
-                        setCategoryParams(ps, category);
-                        ps.addBatch();
-                    }
-                    int[] results = ps.executeBatch();
-                    System.arraycopy(results, 0, totalResults, resultIndex, results.length);
-                    resultIndex += results.length;
-                    logger.debug("Inserted {} rows in batch", results.length);
-                    try (ResultSet rs = ps.getGeneratedKeys()) {
-                        List<Integer> keys = new ArrayList<>();
-                        while (rs.next()) {
-                            keys.add(rs.getInt(1));
-                        }
-                        for (int i = 0; i < batch.size() && i < keys.size(); i++) {
-                            batch.get(i).setCategoryID(keys.get(i));
-                        }
-                    }
-                } catch (SQLException e) {
-                }
+                int[] results = processBatch(conn, batch);
+                System.arraycopy(results, 0, totalResults, resultIndex, results.length);
+                resultIndex += results.length;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch insert failed, rolled back", e);
+            LOGGER.error("Batch insert failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
@@ -119,8 +112,40 @@ public class JdbcCategoryDao {
         return totalResults;
     }
 
+    private boolean isInvalidCategoryList(List<Category> categorys) {
+        if (categorys == null || categorys.isEmpty()) {
+            return true;
+        }
+        for (int i = 0; i < categorys.size(); i++) {
+            if (categorys.get(i) == null)
+                throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
+        }
+        return false;
+    }
+
+    private int[] processBatch(Connection conn, List<Category> batch) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+            for (Category category : batch) {
+                setCategoryParams(ps, category);
+                ps.addBatch();
+            }
+            int[] results = ps.executeBatch();
+            LOGGER.debug("Inserted {} rows in batch", results.length);
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                List<Integer> keys = new ArrayList<>();
+                while (rs.next()) {
+                    keys.add(rs.getInt(1));
+                }
+                for (int i = 0; i < batch.size() && i < keys.size(); i++) {
+                    batch.get(i).setCategoryID(keys.get(i));
+                }
+            }
+            return results;
+        }
+    }
+
     public Category findById(Connection conn, int id) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_CATEGORY_ID))) {
             ps.setInt(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? extract(rs) : null;
@@ -158,13 +183,8 @@ public class JdbcCategoryDao {
     }
 
     public int[] updateAll(Connection conn, List<Category> categorys) throws SQLException {
-        if (categorys == null || categorys.isEmpty())
+        if (isInvalidUpdateCategoryList(categorys)) {
             return new int[0];
-        for (Category category : categorys) {
-            if (category == null)
-                throw new IllegalArgumentException("Null DTO in batch update");
-            if (category.getCategoryID() == null)
-                throw new IllegalArgumentException("Null primary key in batch update");
         }
         int batchSize = 500;
         List<List<Category>> batches = chunkList(categorys, batchSize);
@@ -174,28 +194,48 @@ public class JdbcCategoryDao {
         try {
             conn.setAutoCommit(false);
             for (List<Category> batch : batches) {
-                try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
-                    for (Category category : batch) {
-                        setCategoryParams(ps, category);
-                        ps.setInt(3, category.getCategoryID());
-                        ps.addBatch();
-                    }
-                    int[] results = ps.executeBatch();
-                    System.arraycopy(results, 0, totalResults, resultIndex, results.length);
-                    resultIndex += results.length;
-                    logger.debug("Updated {} rows in batch", results.length);
-                } catch (SQLException e) {
-                }
+                int[] results = processUpdateBatch(conn, batch);
+                System.arraycopy(results, 0, totalResults, resultIndex, results.length);
+                resultIndex += results.length;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch update failed, rolled back", e);
+            LOGGER.error("Batch update failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
         }
         return totalResults;
+    }
+
+    private boolean isInvalidUpdateCategoryList(List<Category> categorys) {
+        if (categorys == null || categorys.isEmpty()) {
+            return true;
+        }
+        for (Category category : categorys) {
+            if (category == null)
+                throw new IllegalArgumentException("Null DTO in batch update");
+            if (category.getCategoryID() == null)
+                throw new IllegalArgumentException("Null primary key in batch update");
+        }
+        return false;
+    }
+
+    private int[] processUpdateBatch(Connection conn, List<Category> batch) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
+            for (Category category : batch) {
+                setCategoryParams(ps, category);
+                ps.setInt(3, category.getCategoryID());
+                ps.addBatch();
+            }
+            int[] results = ps.executeBatch();
+            LOGGER.debug("Updated {} rows in batch", results.length);
+            return results;
+        } catch (SQLException e) {
+            LOGGER.error("Batch update failed", e);
+            throw e;
+        }
     }
 
     public boolean deleteById(Connection conn, int id) throws SQLException {
@@ -206,11 +246,8 @@ public class JdbcCategoryDao {
     }
 
     public int deleteAllByIds(Connection conn, List<Integer> ids) throws SQLException {
-        if (ids == null || ids.isEmpty())
+        if (isInvalidIdsList(ids)) {
             return 0;
-        for (Integer id : ids) {
-            if (id == null)
-                throw new IllegalArgumentException("Null ID in batch delete");
         }
         int chunkSize = 1000;
         List<List<Integer>> chunks = chunkList(ids, chunkSize);
@@ -219,22 +256,13 @@ public class JdbcCategoryDao {
         try {
             conn.setAutoCommit(false);
             for (List<Integer> chunk : chunks) {
-                String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
-                String sql = String.format("DELETE FROM %s WHERE %s IN (%s)", TABLE, COL_CATEGORY_ID, placeholders);
-                try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                    for (int i = 0; i < chunk.size(); i++) {
-                        ps.setInt(i + 1, chunk.get(i));
-                    }
-                    int affected = ps.executeUpdate();
-                    totalDeleted += affected;
-                    logger.debug("Deleted {} rows in batch", affected);
-                } catch (SQLException e) {
-                }
+                int affected = processDeleteChunk(conn, chunk);
+                totalDeleted += affected;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch delete failed, rolled back", e);
+            LOGGER.error("Batch delete failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
@@ -242,14 +270,36 @@ public class JdbcCategoryDao {
         return totalDeleted;
     }
 
-    private void setCategoryParams(PreparedStatement ps, Category category) throws SQLException {
-        ps.setObject(1, category.getName(), Types.VARCHAR);
-        java.time.LocalDateTime val2 = category.getLastUpdate();
-        if (val2 != null) {
-            ps.setObject(2, java.sql.Timestamp.valueOf(val2), Types.TIMESTAMP);
-        } else {
-            ps.setNull(2, Types.TIMESTAMP);
+    private boolean isInvalidIdsList(List<Integer> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return true;
         }
+        for (Integer id : ids) {
+            if (id == null)
+                throw new IllegalArgumentException("Null ID in batch delete");
+        }
+        return false;
+    }
+
+    private int processDeleteChunk(Connection conn, List<Integer> chunk) throws SQLException {
+        String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
+        String sql = String.format("DELETE FROM %s WHERE %s IN (%s)", TABLE, COL_CATEGORY_ID, placeholders);
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < chunk.size(); i++) {
+                ps.setInt(i + 1, chunk.get(i));
+            }
+            int affected = ps.executeUpdate();
+            LOGGER.debug("Deleted {} rows in batch", affected);
+            return affected;
+        } catch (SQLException e) {
+            LOGGER.error("Batch delete failed", e);
+            throw e;
+        }
+    }
+
+    private void setCategoryParams(PreparedStatement ps, Category category) throws SQLException {
+        setNullable(ps, 1, category.getName(), Types.VARCHAR);
+        setNullable(ps, 2, category.getLastUpdate() != null ? java.sql.Timestamp.valueOf(category.getLastUpdate()) : null, Types.TIMESTAMP);
     }
 
     private Category extract(ResultSet rs) throws SQLException {

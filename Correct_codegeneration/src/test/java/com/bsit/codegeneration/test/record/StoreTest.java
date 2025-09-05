@@ -2,8 +2,8 @@ package com.bsit.codegeneration.test.record;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.DisplayName;
-import static org.junit.jupiter.api.Assertions.*;
 import com.bsit.codegeneration.record.*;
+import static org.junit.jupiter.api.Assertions.*;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,7 +41,6 @@ public class StoreTest {
         assertEquals(staff, record.staff());
         assertEquals(customers, record.customers());
         assertEquals(inventorys, record.inventorys());
-
     }
 
     @Test()

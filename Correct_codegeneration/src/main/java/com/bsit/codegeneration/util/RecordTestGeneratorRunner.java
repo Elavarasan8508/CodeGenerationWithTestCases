@@ -21,28 +21,34 @@ public class RecordTestGeneratorRunner {
     private static RecordConfig recordConfig;
     private static final String DEFAULT_SCHEMA = "public";
 
-    public static void main(String[] args) throws Exception {
-        loadConfigurationFromYaml();
+    public static void main(String[] args)  {
 
-        System.out.println("Starting record test generation...");
-        System.out.println("Connecting to: " + dbConfig.getUrl());
+        try {
+            loadConfigurationFromYaml();
 
-        try (Connection conn = DriverManager.getConnection(
-                dbConfig.getUrl(), dbConfig.getUser(), dbConfig.getPassword())) {
+            System.out.println("Starting record test generation...");
+            System.out.println("Connecting to: " + dbConfig.getUrl());
 
-            System.out.println("Database connected successfully!");
+            try (Connection conn = DriverManager.getConnection(
+                    dbConfig.getUrl(), dbConfig.getUser(), dbConfig.getPassword())) {
 
-            List<String> allTables = DatabaseUtils.discoverAllTables(conn, dbConfig.getSchema());
-            System.out.println("Discovered " + allTables.size() + " tables: " + allTables);
+                System.out.println("Database connected successfully!");
 
-            GenerationResult result = processAllTables(conn, allTables);
-            printSummary(allTables.size(), result.successCount, result.failCount);
+                List<String> allTables = DatabaseUtils.discoverAllTables(conn, dbConfig.getSchema());
+                System.out.println("Discovered " + allTables.size() + " tables: " + allTables);
 
-        } catch (SQLException e) {
-            handleDatabaseConnectionError(e);
+                GenerationResult result = processAllTables(conn, allTables);
+                printSummary(allTables.size(), result.successCount, result.failCount);
+
+            } catch (SQLException e) {
+                handleDatabaseConnectionError(e);
+            }
+
+            System.out.println("Record test generation completed!");
+        }catch (Exception e) {
+            logger.error("Fatal error occurred during record test generation", e);
+            System.err.println("\n Fatal error: " + e.getMessage());
         }
-
-        System.out.println("Record test generation completed!");
     }
 
     private static GenerationResult processAllTables(Connection conn, List<String> allTables) {

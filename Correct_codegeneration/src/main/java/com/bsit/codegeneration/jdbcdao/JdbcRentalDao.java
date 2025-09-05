@@ -1,19 +1,24 @@
 package com.bsit.codegeneration.jdbcdao;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.ResultSet;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
-import java.time.LocalDateTime;
-import com.bsit.codegeneration.pojo.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import java.util.Collections;
-import java.util.stream.Collectors;
+import java.sql.Timestamp;
+import com.bsit.codegeneration.pojo.Rental;
+import com.bsit.codegeneration.pojo.Staff;
+import com.bsit.codegeneration.pojo.Inventory;
+import com.bsit.codegeneration.pojo.Customer;
 
 public class JdbcRentalDao {
 
-    private static final Logger logger = LoggerFactory.getLogger(JdbcRentalDao.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(JdbcRentalDao.class);
 
     private static final String TABLE = "rental";
 
@@ -31,30 +36,16 @@ public class JdbcRentalDao {
 
     private static final String COL_LAST_UPDATE = "last_update";
 
+    private static final String SELECT_COLUMNS = "rental_id, rental_date, inventory_id, customer_id, return_date, staff_id, last_update";
+
     private static final String INSERT_SQL = """
         INSERT INTO %s (%s, %s, %s, %s, %s, %s)
         VALUES (?, ?, ?, ?, ?, ?)
         """.formatted(TABLE, COL_RENTAL_DATE, COL_INVENTORY_ID, COL_CUSTOMER_ID, COL_RETURN_DATE, COL_STAFF_ID, COL_LAST_UPDATE);
 
-    private static final String SELECT_BY_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("rental_id, rental_date, inventory_id, customer_id, return_date, staff_id, last_update", TABLE, COL_RENTAL_ID);
-
     private static final String SELECT_ALL_BASE = """
         SELECT %s FROM %s ORDER BY %s
-        """.formatted("rental_id, rental_date, inventory_id, customer_id, return_date, staff_id, last_update", TABLE, COL_RENTAL_ID);
-
-    private static final String SELECT_BY_CUSTOMER_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("rental_id, rental_date, inventory_id, customer_id, return_date, staff_id, last_update", TABLE, COL_CUSTOMER_ID);
-
-    private static final String SELECT_BY_INVENTORY_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("rental_id, rental_date, inventory_id, customer_id, return_date, staff_id, last_update", TABLE, COL_INVENTORY_ID);
-
-    private static final String SELECT_BY_STAFF_ID_SQL = """
-        SELECT %s FROM %s WHERE %s = ?
-        """.formatted("rental_id, rental_date, inventory_id, customer_id, return_date, staff_id, last_update", TABLE, COL_STAFF_ID);
+        """.formatted(SELECT_COLUMNS, TABLE, COL_RENTAL_ID);
 
     private static final String UPDATE_SQL = """
         UPDATE %s
@@ -74,8 +65,21 @@ public class JdbcRentalDao {
         return chunks;
     }
 
+    private static String getSelectByColumnSql(String column) {
+        return """
+            SELECT %s FROM %s WHERE %s = ?
+            """.formatted(SELECT_COLUMNS, TABLE, column);
+    }
+
+    private static void setNullable(PreparedStatement ps, int index, Object value, int sqlType) throws SQLException {
+        if (value != null)
+            ps.setObject(index, value, sqlType);
+        else
+            ps.setNull(index, sqlType);
+    }
+
     public int insert(Connection conn, Rental rental) throws SQLException {
-        logger.debug("Inserting rental: {}", rental);
+        LOGGER.debug("Inserting rental: {}", rental);
         try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
             setRentalParams(ps, rental);
             ps.executeUpdate();
@@ -85,7 +89,7 @@ public class JdbcRentalDao {
                     rental.setRentalID(id);
                     return id;
                 } else {
-                    logger.error("Failed to retrieve generated ID for inserted rental");
+                    LOGGER.error("Failed to retrieve generated ID for inserted rental");
                     throw new SQLException("Failed to retrieve generated ID for inserted rental");
                 }
             }
@@ -93,11 +97,8 @@ public class JdbcRentalDao {
     }
 
     public int[] insertAll(Connection conn, List<Rental> rentals) throws SQLException {
-        if (rentals == null || rentals.isEmpty())
+        if (isInvalidRentalList(rentals)) {
             return new int[0];
-        for (int i = 0; i < rentals.size(); i++) {
-            if (rentals.get(i) == null)
-                throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
         }
         int batchSize = 500;
         List<List<Rental>> batches = chunkList(rentals, batchSize);
@@ -107,31 +108,14 @@ public class JdbcRentalDao {
         try {
             conn.setAutoCommit(false);
             for (List<Rental> batch : batches) {
-                try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
-                    for (Rental rental : batch) {
-                        setRentalParams(ps, rental);
-                        ps.addBatch();
-                    }
-                    int[] results = ps.executeBatch();
-                    System.arraycopy(results, 0, totalResults, resultIndex, results.length);
-                    resultIndex += results.length;
-                    logger.debug("Inserted {} rows in batch", results.length);
-                    try (ResultSet rs = ps.getGeneratedKeys()) {
-                        List<Integer> keys = new ArrayList<>();
-                        while (rs.next()) {
-                            keys.add(rs.getInt(1));
-                        }
-                        for (int i = 0; i < batch.size() && i < keys.size(); i++) {
-                            batch.get(i).setRentalID(keys.get(i));
-                        }
-                    }
-                } catch (SQLException e) {
-                }
+                int[] results = processBatch(conn, batch);
+                System.arraycopy(results, 0, totalResults, resultIndex, results.length);
+                resultIndex += results.length;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch insert failed, rolled back", e);
+            LOGGER.error("Batch insert failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
@@ -139,8 +123,40 @@ public class JdbcRentalDao {
         return totalResults;
     }
 
+    private boolean isInvalidRentalList(List<Rental> rentals) {
+        if (rentals == null || rentals.isEmpty()) {
+            return true;
+        }
+        for (int i = 0; i < rentals.size(); i++) {
+            if (rentals.get(i) == null)
+                throw new IllegalArgumentException("Null DTO at index " + i + " in batch insert");
+        }
+        return false;
+    }
+
+    private int[] processBatch(Connection conn, List<Rental> batch) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_SQL, Statement.RETURN_GENERATED_KEYS)) {
+            for (Rental rental : batch) {
+                setRentalParams(ps, rental);
+                ps.addBatch();
+            }
+            int[] results = ps.executeBatch();
+            LOGGER.debug("Inserted {} rows in batch", results.length);
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                List<Integer> keys = new ArrayList<>();
+                while (rs.next()) {
+                    keys.add(rs.getInt(1));
+                }
+                for (int i = 0; i < batch.size() && i < keys.size(); i++) {
+                    batch.get(i).setRentalID(keys.get(i));
+                }
+            }
+            return results;
+        }
+    }
+
     public Rental findById(Connection conn, int id) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_RENTAL_ID))) {
             ps.setInt(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? extract(rs) : null;
@@ -178,13 +194,8 @@ public class JdbcRentalDao {
     }
 
     public int[] updateAll(Connection conn, List<Rental> rentals) throws SQLException {
-        if (rentals == null || rentals.isEmpty())
+        if (isInvalidUpdateRentalList(rentals)) {
             return new int[0];
-        for (Rental rental : rentals) {
-            if (rental == null)
-                throw new IllegalArgumentException("Null DTO in batch update");
-            if (rental.getRentalID() == null)
-                throw new IllegalArgumentException("Null primary key in batch update");
         }
         int batchSize = 500;
         List<List<Rental>> batches = chunkList(rentals, batchSize);
@@ -194,28 +205,48 @@ public class JdbcRentalDao {
         try {
             conn.setAutoCommit(false);
             for (List<Rental> batch : batches) {
-                try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
-                    for (Rental rental : batch) {
-                        setRentalParams(ps, rental);
-                        ps.setInt(7, rental.getRentalID());
-                        ps.addBatch();
-                    }
-                    int[] results = ps.executeBatch();
-                    System.arraycopy(results, 0, totalResults, resultIndex, results.length);
-                    resultIndex += results.length;
-                    logger.debug("Updated {} rows in batch", results.length);
-                } catch (SQLException e) {
-                }
+                int[] results = processUpdateBatch(conn, batch);
+                System.arraycopy(results, 0, totalResults, resultIndex, results.length);
+                resultIndex += results.length;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch update failed, rolled back", e);
+            LOGGER.error("Batch update failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
         }
         return totalResults;
+    }
+
+    private boolean isInvalidUpdateRentalList(List<Rental> rentals) {
+        if (rentals == null || rentals.isEmpty()) {
+            return true;
+        }
+        for (Rental rental : rentals) {
+            if (rental == null)
+                throw new IllegalArgumentException("Null DTO in batch update");
+            if (rental.getRentalID() == null)
+                throw new IllegalArgumentException("Null primary key in batch update");
+        }
+        return false;
+    }
+
+    private int[] processUpdateBatch(Connection conn, List<Rental> batch) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(UPDATE_SQL)) {
+            for (Rental rental : batch) {
+                setRentalParams(ps, rental);
+                ps.setInt(7, rental.getRentalID());
+                ps.addBatch();
+            }
+            int[] results = ps.executeBatch();
+            LOGGER.debug("Updated {} rows in batch", results.length);
+            return results;
+        } catch (SQLException e) {
+            LOGGER.error("Batch update failed", e);
+            throw e;
+        }
     }
 
     public boolean deleteById(Connection conn, int id) throws SQLException {
@@ -226,11 +257,8 @@ public class JdbcRentalDao {
     }
 
     public int deleteAllByIds(Connection conn, List<Integer> ids) throws SQLException {
-        if (ids == null || ids.isEmpty())
+        if (isInvalidIdsList(ids)) {
             return 0;
-        for (Integer id : ids) {
-            if (id == null)
-                throw new IllegalArgumentException("Null ID in batch delete");
         }
         int chunkSize = 1000;
         List<List<Integer>> chunks = chunkList(ids, chunkSize);
@@ -239,22 +267,13 @@ public class JdbcRentalDao {
         try {
             conn.setAutoCommit(false);
             for (List<Integer> chunk : chunks) {
-                String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
-                String sql = String.format("DELETE FROM %s WHERE %s IN (%s)", TABLE, COL_RENTAL_ID, placeholders);
-                try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                    for (int i = 0; i < chunk.size(); i++) {
-                        ps.setInt(i + 1, chunk.get(i));
-                    }
-                    int affected = ps.executeUpdate();
-                    totalDeleted += affected;
-                    logger.debug("Deleted {} rows in batch", affected);
-                } catch (SQLException e) {
-                }
+                int affected = processDeleteChunk(conn, chunk);
+                totalDeleted += affected;
             }
             conn.commit();
         } catch (SQLException e) {
             conn.rollback();
-            logger.error("Batch delete failed, rolled back", e);
+            LOGGER.error("Batch delete failed, rolled back", e);
             throw e;
         } finally {
             conn.setAutoCommit(autoCommit);
@@ -262,9 +281,36 @@ public class JdbcRentalDao {
         return totalDeleted;
     }
 
+    private boolean isInvalidIdsList(List<Integer> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return true;
+        }
+        for (Integer id : ids) {
+            if (id == null)
+                throw new IllegalArgumentException("Null ID in batch delete");
+        }
+        return false;
+    }
+
+    private int processDeleteChunk(Connection conn, List<Integer> chunk) throws SQLException {
+        String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
+        String sql = String.format("DELETE FROM %s WHERE %s IN (%s)", TABLE, COL_RENTAL_ID, placeholders);
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < chunk.size(); i++) {
+                ps.setInt(i + 1, chunk.get(i));
+            }
+            int affected = ps.executeUpdate();
+            LOGGER.debug("Deleted {} rows in batch", affected);
+            return affected;
+        } catch (SQLException e) {
+            LOGGER.error("Batch delete failed", e);
+            throw e;
+        }
+    }
+
     public List<Rental> findByCustomerID(Connection conn, int customerID) throws SQLException {
         List<Rental> list = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_CUSTOMER_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_CUSTOMER_ID))) {
             ps.setInt(1, customerID);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -277,7 +323,7 @@ public class JdbcRentalDao {
 
     public List<Rental> findByInventoryID(Connection conn, int inventoryID) throws SQLException {
         List<Rental> list = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_INVENTORY_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_INVENTORY_ID))) {
             ps.setInt(1, inventoryID);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -290,7 +336,7 @@ public class JdbcRentalDao {
 
     public List<Rental> findByStaffID(Connection conn, int staffID) throws SQLException {
         List<Rental> list = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(SELECT_BY_STAFF_ID_SQL)) {
+        try (PreparedStatement ps = conn.prepareStatement(getSelectByColumnSql(COL_STAFF_ID))) {
             ps.setInt(1, staffID);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -302,39 +348,12 @@ public class JdbcRentalDao {
     }
 
     private void setRentalParams(PreparedStatement ps, Rental rental) throws SQLException {
-        java.time.LocalDateTime val1 = rental.getRentalDate();
-        if (val1 != null) {
-            ps.setObject(1, java.sql.Timestamp.valueOf(val1), Types.TIMESTAMP);
-        } else {
-            ps.setNull(1, Types.TIMESTAMP);
-        }
-        if (rental.getInventory() != null) {
-            ps.setObject(2, rental.getInventory().getInventoryID(), Types.INTEGER);
-        } else {
-            ps.setNull(2, Types.INTEGER);
-        }
-        if (rental.getCustomer() != null) {
-            ps.setObject(3, rental.getCustomer().getCustomerID(), Types.INTEGER);
-        } else {
-            ps.setNull(3, Types.INTEGER);
-        }
-        java.time.LocalDateTime val4 = rental.getReturnDate();
-        if (val4 != null) {
-            ps.setObject(4, java.sql.Timestamp.valueOf(val4), Types.TIMESTAMP);
-        } else {
-            ps.setNull(4, Types.TIMESTAMP);
-        }
-        if (rental.getStaff() != null) {
-            ps.setObject(5, rental.getStaff().getStaffID(), Types.INTEGER);
-        } else {
-            ps.setNull(5, Types.INTEGER);
-        }
-        java.time.LocalDateTime val6 = rental.getLastUpdate();
-        if (val6 != null) {
-            ps.setObject(6, java.sql.Timestamp.valueOf(val6), Types.TIMESTAMP);
-        } else {
-            ps.setNull(6, Types.TIMESTAMP);
-        }
+        setNullable(ps, 1, rental.getRentalDate() != null ? java.sql.Timestamp.valueOf(rental.getRentalDate()) : null, Types.TIMESTAMP);
+        setNullable(ps, 2, rental.getInventory() != null ? rental.getInventory().getInventoryID() : null, Types.INTEGER);
+        setNullable(ps, 3, rental.getCustomer() != null ? rental.getCustomer().getCustomerID() : null, Types.INTEGER);
+        setNullable(ps, 4, rental.getReturnDate() != null ? java.sql.Timestamp.valueOf(rental.getReturnDate()) : null, Types.TIMESTAMP);
+        setNullable(ps, 5, rental.getStaff() != null ? rental.getStaff().getStaffID() : null, Types.INTEGER);
+        setNullable(ps, 6, rental.getLastUpdate() != null ? java.sql.Timestamp.valueOf(rental.getLastUpdate()) : null, Types.TIMESTAMP);
     }
 
     private Rental extract(ResultSet rs) throws SQLException {

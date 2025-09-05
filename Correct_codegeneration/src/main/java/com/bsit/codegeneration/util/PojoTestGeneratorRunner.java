@@ -21,25 +21,31 @@ public class PojoTestGeneratorRunner {
     private static DtoConfig dtoConfig;
     private static final String DEFAULT_SCHEMA = "public";
 
-    public static void main(String[] args) throws Exception {
-        loadConfigurationFromYaml();
+    public static void main(String[] args)  {
 
-        System.out.println("Starting test generation...");
+        try {
+            loadConfigurationFromYaml();
 
-        try (Connection conn = DriverManager.getConnection(dbConfig.getUrl(), dbConfig.getUser(), dbConfig.getPassword())) {
-            System.out.println("Database connected successfully!");
+            System.out.println("Starting test generation...");
 
-            List<String> allTables = DatabaseUtils.discoverAllTables(conn, DEFAULT_SCHEMA);
-            System.out.println("Discovered " + allTables.size() + " tables: " + allTables);
+            try (Connection conn = DriverManager.getConnection(dbConfig.getUrl(), dbConfig.getUser(), dbConfig.getPassword())) {
+                System.out.println("Database connected successfully!");
 
-            GenerationResult result = processAllTables(conn, allTables);
-            printSummary(allTables.size(), result.successCount, result.failCount);
+                List<String> allTables = DatabaseUtils.discoverAllTables(conn, DEFAULT_SCHEMA);
+                System.out.println("Discovered " + allTables.size() + " tables: " + allTables);
 
-        } catch (SQLException e) {
-            handleDatabaseConnectionError(e);
+                GenerationResult result = processAllTables(conn, allTables);
+                printSummary(allTables.size(), result.successCount, result.failCount);
+
+            } catch (SQLException e) {
+                handleDatabaseConnectionError(e);
+            }
+
+            System.out.println("Test generation completed!");
+        }catch (Exception e) {
+            logger.error("Fatal error occurred during pojo test generation", e);
+            System.err.println("\n Fatal error: " + e.getMessage());
         }
-
-        System.out.println("Test generation completed!");
     }
 
     private static GenerationResult processAllTables(Connection conn, List<String> allTables) {

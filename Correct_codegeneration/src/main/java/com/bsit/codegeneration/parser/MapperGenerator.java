@@ -2,7 +2,6 @@ package com.bsit.codegeneration.parser;
 
 import com.bsit.codegeneration.model.DatabaseConfig;
 import com.bsit.codegeneration.model.TargetConfig;
-import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Modifier;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
@@ -19,6 +18,9 @@ import java.sql.SQLException;
 
 public class MapperGenerator {
 
+    private MapperGenerator(){
+
+    }
     public static void generateMapper(
             String tableName, ResultSet columns, DatabaseConfig dbConfig, TargetConfig target)
             throws Exception {
